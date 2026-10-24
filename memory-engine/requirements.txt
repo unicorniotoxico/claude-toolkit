@@ -1,0 +1,2 @@
+# Sin dependencias de terceros: el engine usa solo la biblioteca estandar (sqlite3 + FTS5).
+# El venv existe para fijar el interprete y aislarlo del Python de los proyectos.

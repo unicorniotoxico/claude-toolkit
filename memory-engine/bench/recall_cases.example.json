@@ -1,0 +1,5 @@
+[
+  {"q": "como se concilia un cobro que no se imputo", "expect": [1]},
+  {"q": "que hace el comando CobroAutomatico", "expect": [2]},
+  {"q": "como hago un deploy de nginx", "expect": []}
+]

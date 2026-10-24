@@ -1,0 +1,12 @@
+# datos y estado locales: nunca se comparten
+memory-engine/.venv/
+memory-engine/data/
+memory-engine/logs/
+memory-engine/config.json
+memory-engine/install-state.json
+memory-engine/bench/recall_cases.json
+memory-engine/bench/last-results.jsonl
+__pycache__/
+*.pyc
+# tipos que el motor de mods genera al cargar (incluyen las herramientas MCP de cada máquina)
+mods/tablero/.claude-plugin/types/

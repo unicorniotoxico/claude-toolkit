@@ -1,0 +1,6 @@
+{
+  "name": "tablero",
+  "version": "0.1.0",
+  "description": "Panel con gasto de la sesión, contexto, límites, estado de herramientas/MCP y métricas del memory-engine",
+  "types": "./types/index.d.ts"
+}
