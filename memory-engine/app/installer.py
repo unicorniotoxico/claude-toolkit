@@ -1,4 +1,4 @@
-"""Parcheo reversible de la configuración de Claude Code. Usado por install.ps1 / uninstall.ps1.
+"""Parcheo reversible de la configuración de Claude Code. Usado por engine.py (install / uninstall).
 
   installer.py install   --claude-dir D --home H --python P --backup B
   installer.py uninstall --claude-dir D --backup B
@@ -7,6 +7,7 @@ Solo toca: settings.json (claves hooks propias), CLAUDE.md (sección marcada) y 
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 import time
@@ -109,7 +110,9 @@ def install(a):
 
 
 def render(text, claude_dir):
-    """Las plantillas usan {{CLAUDE_DIR}} en lugar de la carpeta de un usuario concreto."""
+    """Las plantillas usan {{CLAUDE_DIR}} en lugar de la carpeta de un usuario concreto y {{CMD}} para la
+    extensión de los lanzadores (memory.cmd en Windows, memory en macOS/Linux)."""
+    text = text.replace("{{CMD}}", ".cmd" if os.name == "nt" else "")
     return text.replace("{{CLAUDE_DIR}}", str(claude_dir).replace("\\", "/"))
 
 
@@ -168,6 +171,7 @@ def uninstall(a):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # como cli.py: acentos en cualquier consola
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=("install", "uninstall"))
     ap.add_argument("--claude-dir", required=True)

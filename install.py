@@ -1,4 +1,4 @@
-"""Instala/retira las piezas del toolkit que no son del memory-engine. Usado por install.ps1 / uninstall.ps1.
+"""Instala/retira las piezas del toolkit que no son del memory-engine. Usado por toolkit.py (install / uninstall).
 
   install.py install   --claude-dir D --src S --backup B [--no-dev-agents] [--no-tablero]
   install.py uninstall --claude-dir D --backup B
@@ -180,6 +180,7 @@ def uninstall(a):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # como cli.py: acentos en cualquier consola
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=("install", "uninstall"))
     ap.add_argument("--claude-dir", required=True)

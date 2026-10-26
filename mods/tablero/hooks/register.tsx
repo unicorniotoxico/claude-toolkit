@@ -159,6 +159,7 @@ export function summarizeSessions(list: readonly SessionSummary[], now: number) 
 // ---------------------------------------------------------------- estado del módulo (se reinicia al recargar)
 
 let home = ''
+let venvPython = '.venv/bin/python' // macOS/Linux; en Windows, .venv/Scripts/python.exe
 let sessionId = ''
 let folder = ''
 let lastPublished = ''
@@ -191,7 +192,7 @@ function once(name: string, fn: () => Promise<unknown>) {
 async function readMem($: EngineInterface): Promise<MemStats> {
   const base = `${home}/.claude/memory-engine`
   try {
-    const r = await $.process.run([`${base}/.venv/Scripts/python.exe`, '-I', `${base}/app/cli.py`, 'stats'], {
+    const r = await $.process.run([`${base}/${venvPython}`, '-I', `${base}/app/cli.py`, 'stats'], {
       timeoutMs: 10000,
     })
     if (r.exitCode !== 0) return { active: 0, stale: 0, prompts: 0, injected: 0, hookP95: 0, error: `exit ${r.exitCode}` }
@@ -385,6 +386,7 @@ export const register: Register = on => {
     const ran = await next(e)
     try {
       home = ((await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '').replace(/\\/g, '/')
+      if ((await $.env.get('OS')) === 'Windows_NT') venvPython = '.venv/Scripts/python.exe'
       sessionId = (await $.session.id()).replace(/[^A-Za-z0-9_-]/g, '')
       const root = (await $.session.root()).replace(/\\/g, '/')
       folder = root.split('/').filter(Boolean).pop() ?? ''

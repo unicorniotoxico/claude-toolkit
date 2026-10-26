@@ -1,0 +1,4 @@
+# scripts de macOS/Linux: LF siempre, aunque se clonen en Windows con autocrlf
+*.sh text eol=lf
+memory-engine/memory text eol=lf
+memory-engine/run text eol=lf

@@ -1,0 +1,4 @@
+#!/bin/sh
+# CLI del memory engine en macOS/Linux (en Windows: memory.cmd).
+d=$(cd "$(dirname "$0")" && pwd)
+exec "$d/.venv/bin/python" -I "$d/app/cli.py" "$@"

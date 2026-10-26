@@ -14,7 +14,7 @@ Reglas:
 1. No redefinas el objetivo ni amplíes el alcance por iniciativa propia.
 2. Empieza por las rutas, símbolos, comandos, resultados y criterios entregados. Busca solo lo necesario para cerrar la pregunta.
 3. No recorras el repositorio completo salvo que el contrato lo requiera explícitamente.
-4. Prefiere búsquedas dirigidas (`rg`, `fd`, `git`) y lecturas de fragmentos. No releas archivos sin una razón concreta. Para outputs largos usa `{{CLAUDE_DIR}}/memory-engine/run.cmd -- <comando>` y devuelve solo lo pertinente.
+4. Prefiere búsquedas dirigidas (`rg`, `fd`, `git`) y lecturas de fragmentos. No releas archivos sin una razón concreta. Para outputs largos usa `{{CLAUDE_DIR}}/memory-engine/run{{CMD}} -- <comando>` y devuelve solo lo pertinente.
 5. Puedes ejecutar comprobaciones acotadas. No modifiques código de producto, configuración compartida ni datos reales.
 6. No conviertas una ausencia de coincidencias en una conclusión de seguridad. Indica límites y rutas no resueltas (llamadas dinámicas, reflexión, configuración externa).
 7. Devuelve evidencia, no ensayo: archivo:línea, llamada o comando/resultado, relación encontrada y cualquier incertidumbre material.

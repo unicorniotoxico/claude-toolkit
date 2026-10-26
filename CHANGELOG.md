@@ -1,5 +1,11 @@
 # Cambios
 
+## 1.5.0
+- Multiplataforma: Windows, macOS y Linux. La instalación, la actualización, `doctor` y la desinstalación pasan a `toolkit.py` y `memory-engine/engine.py` (solo biblioteca estándar). `install.ps1` / `uninstall.ps1` quedan como lanzadores en Windows, con los mismos parámetros; en macOS/Linux, `install.sh` / `uninstall.sh` (`--no-dev-agents`, `--no-tablero`, `--toolkit-dir`, `--claude-dir`).
+- Lanzadores POSIX `memory` y `run` junto a `memory.cmd` / `run.cmd`. `CLAUDE.md` y los agentes instalados nombran el del sistema.
+- Hooks y panel usan el Python del venv de cada sistema (`.venv/bin/python` o `.venv\Scripts\python.exe`). En macOS/Linux, `data/` y `logs/` quedan con permisos `700`.
+- Los mensajes del instalador salen en UTF-8 y en orden.
+
 ## 1.4.1
 - Panel: "Sesiones locales" muestra solo las activas; las cerradas o inactivas quedan agrupadas en una línea con su gasto, desplegable con un clic. El total de 24 h las sigue sumando.
 

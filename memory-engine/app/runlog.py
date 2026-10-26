@@ -1,8 +1,8 @@
 """Ejecuta un comando (o lee un archivo), guarda el output completo y devuelve solo lo relevante.
 
-  run.cmd -- npm test                      ejecuta y resume
-  run.cmd --grep "FAIL|Error" -- pytest    patrón propio
-  run.cmd --file <log> [--grep P] [--lines A-B]   consulta un output ya guardado
+  run -- npm test                          ejecuta y resume
+  run --grep "FAIL|Error" -- pytest        patrón propio
+  run --file <log> [--grep P] [--lines A-B]   consulta un output ya guardado
 """
 import argparse
 import json

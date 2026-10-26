@@ -1,7 +1,7 @@
 """Hooks de Claude Code: `prompt` (UserPromptSubmit) y `stop` (Stop).
 
 Contrato failure-safe: cualquier error termina con exit 0 y sin salida; Claude sigue normalmente.
-Invocación: <venv>/Scripts/python.exe -I <home>/app/hooks.py prompt|stop
+Invocación: <python del venv> -I <home>/app/hooks.py prompt|stop
 """
 import json
 import os

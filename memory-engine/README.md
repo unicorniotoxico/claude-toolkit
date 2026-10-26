@@ -18,7 +18,7 @@ UserPromptSubmit ──► .venv/python -I app/hooks.py prompt          (proceso
    ▼
 Claude (Opus) ── evidencia-haiku (Haiku): búsqueda/inventario acotado
    │          └─ seguridad-revisor (Sonnet): revisión independiente de controles afectados
-   │          └─ run.cmd: outputs grandes → log completo local + extracto determinístico
+   │          └─ run (run.cmd): outputs grandes → log completo local + extracto determinístico
    ▼
 Stop ──► .venv/python -I app/hooks.py stop                         (timeout 10 s)
           ├─ parsea bloques MEMORY: de last_assistant_message → filtro de secretos → dedupe → SQLite
@@ -36,8 +36,8 @@ Cero CPU/RAM en reposo: no hay procesos residentes. SQLite se abre solo durante 
 | `app/store.py` | esquema, FTS5, alta + dedupe, ranking, vigencia, formato inyectado |
 | `app/context.py` | proyecto/git sin lanzar git, extracción de términos, session context, detección de stack |
 | `app/secrets_filter.py` | patrones deny + entropía; archivos sensibles nunca se leen (ni para hashear) |
-| `app/cli.py` | `memory.cmd` |
-| `app/runlog.py` | `run.cmd` |
+| `app/cli.py` | `memory` (Windows: `memory.cmd`) |
+| `app/runlog.py` | `run` (Windows: `run.cmd`) |
 | `app/installer.py` | parcheo reversible de settings.json / CLAUDE.md / agentes |
 | `templates/` | sección de CLAUDE.md y agentes instalados |
 | `config.json` | límites, pesos y feature flags |
@@ -105,33 +105,36 @@ Los flags `security_review` y `subagents` son de política: la línea se inyecta
 
 ## CLI
 
-```powershell
-$m = "$env:USERPROFILE\.claude\memory-engine\memory.cmd"
-& $m search "autorización showInvoice" --inject   # scores, features y el bloque exacto que vería Claude
-& $m add --type security_decision --topic auth --fact "..." --files src/a.php --validity until_file_changes
-& $m list [--here] [--type T] [--all]
-& $m show 12 ; & $m verify 12 ; & $m forget 12 [--purge]
-& $m stats ; & $m metrics [--days 7] ; & $m doctor ; & $m vacuum
+`memory` es `~/.claude/memory-engine/memory` en macOS/Linux y `memory.cmd` en Windows (igual `run` / `run.cmd`):
+
+```bash
+memory search "autorización showInvoice" --inject   # scores, features y el bloque exacto que vería Claude
+memory add --type security_decision --topic auth --fact "..." --files src/a.php --validity until_file_changes
+memory list [--here] [--type T] [--all]
+memory show 12 ; memory verify 12 ; memory forget 12 [--purge]
+memory stats ; memory metrics [--days 7] ; memory doctor ; memory vacuum
 ```
 
-Outputs grandes: `run.cmd -- npm test` · `run.cmd --grep "FAIL|Error" -- pytest -q` ·
-`run.cmd --file <log> --lines 120-180`.
+Outputs grandes: `run -- npm test` · `run --grep "FAIL|Error" -- pytest -q` ·
+`run --file <log> --lines 120-180`.
 
 ## Comparar A (sin sistema) vs B (con sistema)
 
 1. Elige 3–5 tareas reales y repetibles (bugfix, cambio sensible, revisión) desde el mismo commit.
 2. A: `config.json` → `"enabled": false` (los hooks no hacen nada; las reglas de CLAUDE.md siguen cargadas;
    para A puro, desinstala o comenta la sección marcada). B: `"enabled": true`.
-3. Tras cada tarea: `memory.cmd metrics --days 0.1` (tool calls, agentes, tokens nuevos/cache del transcript,
+3. Tras cada tarea: `memory metrics --days 0.1` (tool calls, agentes, tokens nuevos/cache del transcript,
    recuerdos inyectados/descartados) + `/usage` del plan antes/después + resultado (¿correcto?, ¿verificado?).
 4. La métrica principal es tarea correcta por uso; los tokens son diagnóstico, no % del cupo Pro.
 
 ## Instalación
 
-`install.ps1` (idempotente) · `doctor.ps1` · `uninstall.ps1 [-DeleteData]`.
+`engine.py install` (idempotente) · `engine.py doctor` · `engine.py uninstall [--delete-data]`, con cualquier
+Python 3.10+ (uninstall, con el Python base: el venv se borra). En Windows, también `install.ps1` · `doctor.ps1` ·
+`uninstall.ps1 [-DeleteData]`. Permisos de `data/` y `logs/`: solo tu usuario (Windows: más SYSTEM; macOS/Linux: `700`).
 Respaldo previo en `~/.claude/backups/memory-engine-<fecha>/antes` + `manifest.json` con hashes.
 Uninstall restaura byte a byte los archivos que no cambiaste desde la instalación; si los cambiaste, retira
 solo lo propio (hooks marcados, sección `<!-- memory-engine -->`) y conserva tus cambios. Los datos se archivan
-en el respaldo salvo `-DeleteData`.
+en el respaldo salvo `--delete-data`.
 
-Tests: `.venv\Scripts\python.exe -I -m unittest discover -s tests -v` · Benchmark: `.venv\Scripts\python.exe -I bench\bench.py` · Recall con consultas reales sobre la DB: `.venv\Scripts\python.exe -I bench\recall.py` (casos en `bench\recall_cases.json`; copialo de `recall_cases.example.json` y ajustá consultas e ids)
+Con el Python del venv (`.venv/bin/python`; en Windows `.venv\Scripts\python.exe`): tests `-I -m unittest discover -s tests -v` · benchmark `-I bench/bench.py` · recall con consultas reales sobre la DB `-I bench/recall.py` (casos en `bench/recall_cases.json`; copialo de `recall_cases.example.json` y ajustá consultas e ids)

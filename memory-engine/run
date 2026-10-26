@@ -1,0 +1,4 @@
+#!/bin/sh
+# Outputs grandes a log + extracto en macOS/Linux (en Windows: run.cmd).
+d=$(cd "$(dirname "$0")" && pwd)
+exec "$d/.venv/bin/python" -I "$d/app/runlog.py" "$@"

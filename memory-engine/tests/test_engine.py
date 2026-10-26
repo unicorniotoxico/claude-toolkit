@@ -1,5 +1,6 @@
-"""Tests unitarios e integración. Ejecutar:  .venv\\Scripts\\python.exe -I -m unittest discover -s tests -v
-(desde memory-engine). Cada test usa un MEMORY_ENGINE_HOME temporal: nunca toca los datos reales."""
+"""Tests unitarios e integración. Ejecutar desde memory-engine con el Python del venv
+(.venv/bin/python o .venv\Scripts\python.exe):  -I -m unittest discover -s tests -v
+Cada test usa un MEMORY_ENGINE_HOME temporal: nunca toca los datos reales."""
 import json
 import os
 import shutil
