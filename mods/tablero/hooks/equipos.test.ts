@@ -146,11 +146,12 @@ test('restaura el plan guardado y distingue ausencia de evidencia de una interru
   expect(nuevo.resumen().map(t => t.estado)).toEqual(['correcto', 'en curso', 'pendiente'])
 })
 
-test('el diseño precede la interfaz y la revisión UX espera la implementación', async () => {
+test('las dos revisiones UX arrancan en paralelo después de implementar', async () => {
   const { plan, lanzadas } = correr([
     tarea('diseno', { tipo: 'diseno_ux' }),
     tarea('ui', { depende: ['diseno'] }),
-    tarea('revision', { tipo: 'revision_ux', depende: ['ui'] }),
+    tarea('visual', { tipo: 'revision_ux_visual', depende: ['ui'], archivos: ['ui.php'] }),
+    tarea('interaccion', { tipo: 'revision_ux_interaccion', depende: ['ui'], archivos: ['ui.php'] }),
     tarea('api'),
   ])
   await plan.avanzar()
@@ -158,7 +159,9 @@ test('el diseño precede la interfaz y la revisión UX espera la implementación
   plan.terminar('diseno', 'RESULTADO: OK\nAcción principal visible.', 'answer')
   await plan.avanzar()
   expect(lanzadas).toEqual(['diseno', 'api', 'ui'])
+  plan.terminar('api', 'RESULTADO: OK', 'answer')
   plan.terminar('ui', 'RESULTADO: OK', 'answer')
   await plan.avanzar()
-  expect(lanzadas.at(-1)).toBe('revision')
+  expect(lanzadas).toEqual(['diseno', 'api', 'ui', 'visual', 'interaccion'])
+  expect(plan.resumen().filter(t => t.estado === 'en curso').map(t => t.id)).toEqual(['visual', 'interaccion'])
 })

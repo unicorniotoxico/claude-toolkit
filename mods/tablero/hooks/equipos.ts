@@ -1,4 +1,4 @@
-export const TIPOS = ['preparacion', 'implementacion', 'verificacion', 'integracion', 'diseno_ux', 'revision_ux'] as const
+export const TIPOS = ['preparacion', 'implementacion', 'verificacion', 'integracion', 'diseno_ux', 'revision_ux', 'revision_ux_visual', 'revision_ux_interaccion'] as const
 type Tipo = typeof TIPOS[number]
 type Estado = 'en cola' | 'en curso' | 'correcto' | 'falló' | 'pendiente' | 'bloqueado' | 'pausada'
 
@@ -271,6 +271,8 @@ export function promptTarea(t: Tarea, evidencia: string) {
       : 'Comprueba de forma independiente el criterio encargado. Reutiliza la evidencia de dependencias y ejecuta otra comprobación solo si cubre un escenario faltante o un estado distinto.',
     diseno_ux: 'Define el recorrido, la jerarquía visual y los estados antes de implementar. Devuelve criterios concretos para quien implementa.',
     revision_ux: 'Recorre la interfaz implementada y compara las acciones principales con el diseño y los criterios. Si no hay vista ejecutable, identifica lo observado por lectura y declara pendiente la validación visual.',
+    revision_ux_visual: 'Compara la interfaz renderizada con el diseño. Revisa jerarquía, tipografía, contraste, espaciado, desbordes y comportamiento en tamaños relevantes. Registra la pantalla y los tamaños observados. Si no hay vista ejecutable, declara pendiente la validación visual.',
+    revision_ux_interaccion: 'Recorre las acciones principales. Comprueba navegación, teclado y foco, nombres accesibles, confirmaciones y recuperación de errores. Registra el recorrido y el resultado observado. Si solo puedes leer el código, declara pendiente lo que requiere ejecución.',
     integracion: 'Comprueba únicamente cómo encajan las piezas y el recorrido integrado. Reutiliza la evidencia de las pruebas de cada equipo.',
   }[t.tipo]
   return [
