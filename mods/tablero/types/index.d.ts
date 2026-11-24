@@ -72,6 +72,9 @@ declare module 'claude-code' {
       mcpOff: string[]
       /** lista de sesiones cerradas o inactivas desplegada */
       showIdle: boolean
+      seccionActiva: string | null
+      showMcp: boolean
+      tab: 'general' | 'agentes'
     }
   }
 }

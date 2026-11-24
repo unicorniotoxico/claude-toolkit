@@ -29,10 +29,16 @@ test('clic sobre un servidor MCP lo apaga y lo prende', async ($, on) => {
   })
   await ui.press({ key: 'actualizar' })
   const row = async () => (await ui.find({ key: 'mcp:mysql-db' }))?.text ?? ''
+  expect(await row()).toBe('')
+  await ui.press({ key: 'seccion:mcp' })
   expect(await row()).toContain('1 tools')
   await ui.press({ key: 'mcp:mysql-db' })
   expect(await row()).toContain('apagado')
   await ui.press({ key: 'mcp:mysql-db' })
+  expect(await row()).toContain('1 tools')
+  await ui.press({ key: 'seccion:mcp' })
+  expect(await row()).toBe('')
+  await ui.press({ key: 'seccion:mcp' })
   expect(await row()).toContain('1 tools')
 })
 
@@ -162,7 +168,7 @@ test('parsea la salida de memory.cmd stats', async () => {
   expect(parseMemStats(out)).toEqual({ active: 15, stale: 1, prompts: 68, injected: 1, hookP95: 313 })
 })
 
-test('el panel dibuja sus secciones en terminal y desktop', async $ => {
+test('el índice navega a sus secciones y la pestaña Agentes reemplaza la vista General', async $ => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const props = {
       title: 'Tablero',
@@ -177,9 +183,23 @@ test('el panel dibuja sus secciones en terminal y desktop', async $ => {
     expect(await ui.find({ type: 'Text', text: /Sesiones locales/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /No hay otras sesiones/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Memory-engine/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Todavía no se lanzó ninguno/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Todavía no se lanzó ninguno/ })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /Sin lectura todavía/ })).toBeDefined()
     expect(await ui.find({ type: 'Button' })).toBeDefined()
+    const secciones = ['sesion', 'cuenta', 'sesiones', 'mcp', 'herramientas', 'memoria', 'apariencia']
+    for (const id of secciones) {
+      await ui.press({ key: `ir:${id}` })
+      expect(await ui.find({ key: `seccion:${id}` })).toBeDefined()
+      expect(await ui.find({ key: 'ir:todas' })).toBeDefined()
+      await ui.press({ key: 'ir:todas' })
+    }
+    await ui.press({ key: 'tab:agentes' })
+    expect(await ui.find({ key: 'seccion:mcp' })).toBeUndefined()
+    expect(await ui.find({ key: 'ir:sesion' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /Todavía no se lanzó ninguno/ })).toBeDefined()
+    await ui.press({ key: 'tab:general' })
+    expect(await ui.find({ key: 'seccion:mcp' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Todavía no se lanzó ninguno/ })).toBeUndefined()
     await ui.unmount()
   }
 })
@@ -195,7 +215,7 @@ test('el modo Desarrollo solicita agentes nativos y muestra las tareas rechazada
   on('process.run', () => ({ value: { exitCode: 0, stdout: 'a'.repeat(40), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
-  on('ui.render', ($, e) => ({ ...h($.ui.resolve(e).Box, {}) }) as RenderElement)
+  on('ui.render', ($, e) => h($.ui.resolve(e).Box, {}) as RenderElement)
   const pane = await $.ui.mount({
     plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
     props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 50 }, view: {} },
@@ -218,5 +238,6 @@ test('el modo Desarrollo solicita agentes nativos y muestra las tareas rechazada
   expect(result.deny).toBeUndefined()
   expect(lanzamientos).toEqual(['tablero:desarrollo-dev', 'tablero:desarrollo-verificador'])
   expect(JSON.stringify(result.result)).toContain('bloqueado')
+  await pane.press({ key: 'tab:agentes' })
   expect((await pane.find({ type: 'Text', text: /Catálogo · catalogo/ }))?.text).toContain('pendiente')
 })
