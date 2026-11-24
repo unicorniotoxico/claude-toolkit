@@ -321,3 +321,40 @@ test('el aviso detalla cada paquete, permite omitir y se puede silenciar', async
   expect(resultado).not.toContain('lldb')
   expect(ejecuciones).toBe(1)
 })
+
+test('Dispositivos explica el estado y prepara un envío antes de confirmarlo', async ($, on) => {
+  const peer = 'a'.repeat(64)
+  const calls: string[][] = []
+  on('process.run', (_$, e) => {
+    const op = e as unknown as { argv: string[] }
+    const action = op.argv[4] ?? ''
+    calls.push([action])
+    return { value: {
+      exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false,
+      stdout: action === 'send' ? '{"status":202}' : JSON.stringify({
+        enabled: true, conexion: { estado: 'configurada', huella: peer, puerto: 4321 },
+        pending: [], grants: [], inbox: [], alerts: [],
+      }),
+    } }
+  })
+  const ui = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  })
+  await ui.press({ key: 'tab:dispositivos' })
+  expect(await ui.find({ text: /Enlace habilitado/ })).toBeDefined()
+  await ui.press({ key: 'dispositivos:usar' })
+  await ui.press({ key: 'dispositivos:previa' })
+  expect(await ui.find({ text: /Ingresá la dirección/ })).toBeDefined()
+  await ui.input({ key: 'dispositivo:destino:host', text: '192.168.1.10', kind: 'submit' })
+  await ui.input({ key: 'dispositivo:destino:puerto', text: '4321', kind: 'submit' })
+  await ui.input({ key: 'dispositivo:destino:huella', text: peer, kind: 'submit' })
+  await ui.input({ key: 'dispositivo:codigo', text: 'b'.repeat(32), kind: 'submit' })
+  await ui.press({ key: 'dispositivos:coincide-destino' })
+  await ui.press({ key: 'dispositivos:previa' })
+  expect(await ui.find({ text: 'Vista previa' })).toBeDefined()
+  expect(calls.flat()).not.toContain('send')
+  await ui.press({ key: 'dispositivos:enviar' })
+  expect(calls.flat()).toContain('send')
+  expect(await ui.find({ text: /La otra PC tiene que aprobarla/ })).toBeDefined()
+})

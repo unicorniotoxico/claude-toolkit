@@ -249,6 +249,31 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(405)
 
 
+def connection_info(folder):
+    try:
+        config = json.loads((folder / "gateway.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"estado": "sin_configurar"}
+    except (OSError, ValueError):
+        return {"estado": "invalida"}
+    try:
+        address = ipaddress.IPv4Address(config["bind"])
+        port = config["port"]
+        if not any(address in ipaddress.ip_network(net)
+                   for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")):
+            raise ValueError()
+        if type(port) is not int or not 1024 <= port <= 65535 or not config["allow"]:
+            raise ValueError()
+        for network in config["allow"]:
+            ipaddress.ip_network(network, strict=False)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(config["cert"], config["key"])
+        context.load_verify_locations(config["ca"])
+        return {"estado": "configurada", "huella": fingerprint(certificate(config["cert"])), "puerto": port}
+    except (OSError, ValueError, TypeError, KeyError):
+        return {"estado": "invalida"}
+
+
 def local(folder, action, args):
     now = int(time.time())
     with transaction(folder) as db:
@@ -279,6 +304,7 @@ def local(folder, action, args):
             db.execute("DELETE FROM grants WHERE until<=?", (now,))
             return dict(
                 enabled=enabled(db),
+                conexion=connection_info(folder),
                 pending=db.execute("SELECT peer,at FROM pending ORDER BY at DESC LIMIT 12").fetchall(),
                 grants=db.execute("SELECT peer,project,kind,mode,until FROM grants WHERE until>? ORDER BY until LIMIT 30", (now,)).fetchall(),
                 inbox=db.execute("SELECT project,kind,data FROM inbox ORDER BY rowid DESC LIMIT 12").fetchall(),

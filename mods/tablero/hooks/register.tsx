@@ -1,8 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRun, EstadoDispositivos, PreferenciasSeguridad, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
+import type { AgentRun, EstadoDispositivos, FormularioDispositivo, PreferenciasSeguridad, VistaDispositivos, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
 import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
+import { ALERTAS, BLOQUES, FORMULARIO_INICIAL, describirBloque, prepararEnvio } from './dispositivos'
 import { leerPropuesta } from './herramientas'
 import { Equipos, planValidado, promptTarea, TIPOS } from './equipos'
 
@@ -48,6 +49,11 @@ const preferenciasSeguridad = atom({ plugin: 'tablero', key: 'preferenciasSeguri
   { monitor: false, rdp: true, salida: true, puerto: true })
 const estadoMonitor = atom({ plugin: 'tablero', key: 'estadoMonitor' } as const, '')
 const envioDispositivo = atom({ plugin: 'tablero', key: 'envioDispositivo' } as const, [])
+const vistaDispositivo = atom({ plugin: 'tablero', key: 'vistaDispositivo' } as const, 'inicio')
+const formularioDispositivo = atom({ plugin: 'tablero', key: 'formularioDispositivo' } as const, FORMULARIO_INICIAL)
+const peerDispositivo = atom({ plugin: 'tablero', key: 'peerDispositivo' } as const, '')
+const codigoDispositivo = atom({ plugin: 'tablero', key: 'codigoDispositivo' } as const, '')
+const mensajeDispositivo = atom({ plugin: 'tablero', key: 'mensajeDispositivo' } as const, '')
 const showIdle = atom({ plugin: 'tablero', key: 'showIdle' } as const, false)
 
 // Temas: colores de títulos, barras y estados. 'claude' sigue el tema de Claude Code (claro u oscuro).
@@ -375,19 +381,71 @@ async function cambiarSeguridad($: EngineInterface, key: keyof PreferenciasSegur
   if (key === 'monitor') once('seguridad', () => refrescarSeguridad($, true))
 }
 
+async function cambiarVistaDispositivo($: EngineInterface, vista: VistaDispositivos) {
+  await update($, vistaDispositivo, () => vista)
+  await update($, mensajeDispositivo, () => '')
+  await update($, peerDispositivo, () => '')
+  await update($, envioDispositivo, () => [])
+  await update($, formularioDispositivo, current => ({ ...current, codigo: '', valor: '', revision: '', coincide: false }))
+}
+
+async function plantearEnvioDispositivo($: EngineInterface, invitacion: boolean) {
+  try {
+    const args = prepararEnvio(await read($, formularioDispositivo), invitacion)
+    await update($, envioDispositivo, () => args)
+    await update($, mensajeDispositivo, () => '')
+  } catch (error) {
+    await update($, mensajeDispositivo, () => error instanceof Error ? error.message : 'Revisá los datos del envío.')
+  }
+}
+
 async function operarDispositivo($: EngineInterface, action: string, args: string[]) {
+  const feedback = (text: string) => update($, mensajeDispositivo, () => text)
   try {
     const result = await gateway($, action, args)
-    if (action === 'send') {
-      await update($, envioDispositivo, () => [])
-      void $.ui.toast(result.status === 202 ? 'Recibido por el otro dispositivo.' : 'El receptor rechazó el envío: HTTP ' + result.status)
-    } else if (action === 'grant' || action === 'reject' || action === 'revoke') {
-      void $.ui.toast('Permisos actualizados en este dispositivo.')
+    if (action === 'invite') {
+      await update($, codigoDispositivo, () => String(result.code))
+      await feedback('Invitación creada. Vence en cinco minutos y sirve una sola vez.')
+    } else if (action === 'send') {
+      if (result.status === 202) {
+        await update($, envioDispositivo, () => [])
+        if (args[4] === 'pair') await update($, formularioDispositivo, current => ({ ...current, codigo: '' }))
+        await feedback(args[4] === 'pair' ? 'Solicitud recibida. La otra PC tiene que aprobarla.' : 'El otro dispositivo confirmó la recepción.')
+      } else {
+        const mensajes: Record<number, string> = {
+          400: 'La otra PC rechazó el formato del mensaje.',
+          403: args[4] === 'pair' ? 'El enlace está apagado o la invitación venció, se usó o es incorrecta.'
+            : 'La otra PC no autorizó ese proyecto y tipo de información, o el permiso ya venció.',
+          409: 'La otra PC ya recibió este mensaje.',
+        }
+        await feedback(mensajes[result.status] ?? 'El otro dispositivo rechazó la operación.')
+      }
+    } else if (action === 'grant') {
+      await feedback('Permiso temporal guardado en esta PC.')
+    } else if (action === 'reject' || action === 'revoke') {
+      await update($, peerDispositivo, () => '')
+      await feedback(action === 'reject' ? 'Solicitud rechazada.' : 'Permisos del dispositivo revocados.')
+    } else if (action === 'link') {
+      if (args[0] === 'off') await update($, codigoDispositivo, () => '')
+      await feedback(args[0] === 'off' ? 'Enlace desactivado. Se revocaron los permisos.' : 'Enlace activado en esta PC.')
     }
     await refrescarSeguridad($)
   } catch {
-    void $.ui.toast('La operación no se pudo completar. Revisá configuración, huellas y estado del receptor.')
+    await feedback(action === 'send' ? 'No se pudo conectar. Revisá la dirección, el puerto, la huella y que el receptor esté en ejecución.'
+      : 'No se pudo completar. Revisá que el enlace esté configurado y que la solicitud siga vigente.')
   }
+}
+
+async function aprobarDispositivo($: EngineInterface, peer: string) {
+  const form = await read($, formularioDispositivo)
+  const proyecto = form.proyecto.trim()
+  const minutos = Number(form.minutos)
+  if (!form.coincide || !/^[a-z0-9][a-z0-9_.-]{0,79}$/i.test(proyecto) ||
+      !/^\d{1,3}$/.test(form.minutos) || minutos < 1 || minutos > 120) {
+    await update($, mensajeDispositivo, () => 'Confirmá la huella, ingresá el proyecto y elegí una duración de 1 a 120 minutos.')
+    return
+  }
+  await operarDispositivo($, 'grant', [peer, proyecto, form.bloque, form.bloque === 'work_request' ? 'work' : 'read', String(minutos)])
 }
 
 function startTimers($: EngineInterface) {
@@ -618,6 +676,7 @@ export const register: Register = on => {
         kind === 'work_request' ? { operation: values[0], revision: values[1] } : { code: values[0] }
       if (!host || !port || !peer || !project || !['pair', 'status', 'test_result', 'work_request'].includes(kind ?? ''))
         return { text: 'Uso: /dispositivos enviar HOST PUERTO HUELLA PROYECTO TIPO [valores]' }
+      await cambiarVistaDispositivo($, kind === 'pair' ? 'usar' : 'enviar')
       await update($, envioDispositivo, () => [host, port, peer, project, kind, JSON.stringify(data)])
     } else if (args[0] === 'permitir') {
       if (args.length !== 6) return { text: 'Uso: /dispositivos permitir HUELLA PROYECTO BLOQUE read|work MINUTOS' }
@@ -1007,7 +1066,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text, Button, Input } = $.ui.resolve(e)
     const u = await read($, usage)
     const ts = await read($, tools)
     const filasEquipos = await read($, equipos)
@@ -1037,6 +1096,15 @@ export const register: Register = on => {
     const dispositivos = await read($, estadoDispositivos)
     const monitor = await read($, estadoMonitor)
     const envio = await read($, envioDispositivo)
+    const vistaActual = await read($, vistaDispositivo)
+    const formulario = await read($, formularioDispositivo)
+    const peerElegido = await read($, peerDispositivo)
+    const codigo = await read($, codigoDispositivo)
+    const mensaje = await read($, mensajeDispositivo)
+    const conexion = dispositivos?.conexion
+    const configurada = conexion?.estado === 'configurada'
+    const camposDestino = [['host', 'Dirección de la otra PC'], ['puerto', 'Puerto'], ['huella', 'Huella completa de la otra PC']] as const
+    const bloques = Object.entries(BLOQUES) as Array<[FormularioDispositivo['bloque'], string]>
     const alertas = dispositivos?.alerts.filter(([rule]) => rule === 'remote_logon' ? seguridad.rdp :
       rule === 'outbound_review' ? seguridad.salida : seguridad.puerto) ?? []
     const abiertas = await read($, seccionesAbiertas)
@@ -1286,38 +1354,212 @@ export const register: Register = on => {
 
     const vistaDispositivos = tabActual === 'dispositivos' && (
       <Box flexDirection="column" gap={1}>
-        <Box flexWrap="wrap" flexDirection="row" gap={1}>
-          <Button key="dispositivos:actualizar" onPress={() => refrescarSeguridad($)}>Actualizar</Button>
-          <Button key="dispositivos:enlace" onPress={() => operarDispositivo($, 'link', [dispositivos?.enabled ? 'off' : 'on'])}>
-            {dispositivos?.enabled ? 'Desactivar enlace' : 'Activar enlace'}
-          </Button>
-        </Box>
-        <Box flexDirection="column">
-          <Text bold color={th.accent}>Solicitudes de conexión</Text>
-          {dispositivos?.pending.map(([peer]) => <Text key={peer}>{peer}</Text>)}
-          <Text dimColor>Compará la huella por otro canal. Autorizá desde /dispositivos permitir.</Text>
-        </Box>
-        <Box flexDirection="column">
-          <Text bold color={th.accent}>Matriz de permisos entrantes</Text>
-          {dispositivos?.grants.map(([peer, project, kind, mode, until]) =>
-            <Text key={peer + project + kind}>{peer.slice(0, 12)} · {project} · {kind} · {mode} · hasta {hhmm(until * 1000)}</Text>)}
-        </Box>
-        <Box flexDirection="column">
-          <Text bold color={th.accent}>Bandeja recibida</Text>
-          {dispositivos?.inbox.map(([project, kind, data]) => <Text>{project} · {kind} · {data}</Text>)}
-        </Box>
-        <Box flexDirection="column">
-          <Text bold color={th.accent}>Alertas de las últimas 24 horas</Text>
-          {alertas.map(([rule, peer, total, at]) =>
-            <Text key={rule + peer} color={th.warn}>{rule} · {peer.length === 64 ? peer.slice(0, 12) : peer} · {total} · {hhmm(at * 1000)}</Text>)}
-        </Box>
-        {!!envio.length && (
-          <Box flexDirection="column">
-            <Text bold color={th.accent}>Vista previa del envío</Text>
-            <Text>{envio[0]}:{envio[1]} · {envio[2]}</Text>
-            <Text>{envio[3]} · {envio[4]} · {envio[4] === 'pair' ? 'código temporal' : envio[5]}</Text>
-            <Button key="dispositivos:enviar" variant="primary" onPress={() => operarDispositivo($, 'send', envio)}>Enviar</Button>
-            <Button key="dispositivos:cancelar" plain onPress={() => update($, envioDispositivo, () => [])}>Cancelar</Button>
+        {vistaActual !== 'inicio' && (
+          <Button key="dispositivos:volver" plain onPress={() => cambiarVistaDispositivo($, 'inicio')}>‹ Dispositivos</Button>
+        )}
+        {mensaje && <Text color={th.accent}>{mensaje}</Text>}
+        {vistaActual === 'inicio' && (
+          <Box flexDirection="column" gap={1}>
+            <Box flexDirection="column">
+              <Text bold>Esta PC</Text>
+              <Text color={configurada ? th.ok : th.warn}>
+                {!dispositivos ? 'Estado sin consultar' :
+                  conexion?.estado === 'invalida' ? 'Configuración de conexión incompleta o inválida' :
+                    !configurada ? 'Falta configurar la conexión' :
+                      dispositivos.enabled ? 'Enlace habilitado' : 'Enlace desactivado'}
+              </Text>
+              {configurada && <Text dimColor>Puerto configurado: {conexion?.puerto}</Text>}
+              {!configurada && dispositivos && (
+                <Button key="dispositivos:configurar" onPress={() => cambiarVistaDispositivo($, 'configuracion')}>Ver cómo configurar esta PC</Button>
+              )}
+              <Box flexWrap="wrap" flexDirection="row" gap={1}>
+                <Button key="dispositivos:actualizar" plain onPress={() => refrescarSeguridad($)}>Actualizar estado</Button>
+                {(configurada || dispositivos?.enabled) && (
+                  <Button key="dispositivos:enlace" onPress={() => operarDispositivo($, 'link', [dispositivos?.enabled ? 'off' : 'on'])}>
+                    {dispositivos?.enabled ? 'Desactivar enlace' : 'Habilitar enlace'}
+                  </Button>
+                )}
+              </Box>
+            </Box>
+            {configurada && dispositivos?.enabled && (
+              <Box flexDirection="column" gap={1}>
+                <Box flexDirection="column">
+                  <Button key="dispositivos:invitar" onPress={() => operarDispositivo($, 'invite', [])}>Invitar a otra PC</Button>
+                  <Text dimColor>La otra PC va a necesitar el código y tu huella.</Text>
+                  {codigo && <Text>Código temporal: {codigo}</Text>}
+                  {codigo && <Text>Huella de esta PC: {conexion?.huella}</Text>}
+                </Box>
+                <Button key="dispositivos:usar" onPress={() => cambiarVistaDispositivo($, 'usar')}>Tengo una invitación</Button>
+                <Button key="dispositivos:nuevo-envio" onPress={() => cambiarVistaDispositivo($, 'enviar')}>Preparar un envío</Button>
+              </Box>
+            )}
+            <Button key="dispositivos:permisos" onPress={() => cambiarVistaDispositivo($, 'permisos')}>
+              Solicitudes y permisos{dispositivos?.pending.length ? ' · ' + dispositivos.pending.length + ' pendientes' : ''}
+            </Button>
+            <Button key="dispositivos:actividad" onPress={() => cambiarVistaDispositivo($, 'actividad')}>
+              Mensajes y alertas{alertas.length ? ' · ' + alertas.length + ' alertas' : ''}
+            </Button>
+          </Box>
+        )}
+
+        {vistaActual === 'configuracion' && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Preparar esta PC para conectar</Text>
+            <Text>1. Prepará un certificado y una clave para cada PC, firmados por la misma CA privada.</Text>
+            <Text>2. Guardá gateway.json en la carpeta memory-engine/data/dispositivos con los certificados, la IP privada, el puerto y los orígenes permitidos.</Text>
+            <Text>3. Iniciá el gateway en la PC que recibe. La guía DEVICES.md en scripts del mod tiene el comando y los pasos del firewall.</Text>
+            <Button key="dispositivos:comprobar" onPress={async () => {
+              await refrescarSeguridad($)
+              await cambiarVistaDispositivo($, 'inicio')
+            }}>Volver y comprobar estado</Button>
+          </Box>
+        )}
+
+        {vistaActual === 'permisos' && (
+          <Box flexDirection="column" gap={1}>
+            <Box flexDirection="column">
+              <Text bold>Solicitudes pendientes</Text>
+              {!dispositivos?.pending.length && <Text dimColor>No hay solicitudes pendientes.</Text>}
+              {dispositivos?.pending.map(([peer]) => (
+                <Box key={peer} flexDirection="column">
+                  <Text>Huella: {peer}</Text>
+                  <Box flexDirection="row" gap={1} flexWrap="wrap">
+                    <Button key={'dispositivos:revisar:' + peer} onPress={async () => {
+                      await update($, peerDispositivo, () => peer)
+                      await update($, formularioDispositivo, current => ({ ...current, coincide: false }))
+                    }}>Revisar solicitud</Button>
+                    <Button key={'dispositivos:rechazar:' + peer} plain onPress={() => operarDispositivo($, 'reject', [peer])}>Rechazar</Button>
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+            {peerElegido && dispositivos?.pending.some(([peer]) => peer === peerElegido) && (
+              <Box flexDirection="column" gap={1}>
+                <Text bold>Permiso temporal</Text>
+                <Text dimColor>Presioná Enter para guardar cada campo.</Text>
+                <Text>Compará esta huella con la pantalla de la otra PC: {peerElegido}</Text>
+                <Button key="dispositivos:comparada" plain onPress={() => update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
+                  {formulario.coincide ? '☑' : '☐'} La huella coincide
+                </Button>
+                <Input key="dispositivo:permiso-proyecto" label="Identificador del proyecto" value={formulario.proyecto}
+                  onSubmit={value => update($, formularioDispositivo, f => ({ ...f, proyecto: value }))} />
+                <Input key="dispositivo:permiso-minutos" label="Duración en minutos" value={formulario.minutos}
+                  onSubmit={value => update($, formularioDispositivo, f => ({ ...f, minutos: value }))} />
+                {bloques.map(([id, nombre]) => (
+                  <Button key={'dispositivo:permiso:' + id} plain onPress={() => update($, formularioDispositivo, f => ({ ...f, bloque: id }))}>
+                    {formulario.bloque === id ? '●' : '○'} {nombre} · {id === 'work_request' ? 'Trabajo' : 'Lectura'}
+                  </Button>
+                ))}
+                <Button key="dispositivo:autorizar" variant="primary" onPress={press => { if (press.surface === 'terminal' || press.surface === 'desktop') return aprobarDispositivo($, peerElegido) }}>
+                  Autorizar este permiso
+                </Button>
+              </Box>
+            )}
+            <Box flexDirection="column">
+              <Text bold>Permisos vigentes</Text>
+              {!dispositivos?.grants.length && <Text dimColor>No hay permisos vigentes.</Text>}
+              {dispositivos?.grants.map(([peer, project, kind, mode, until]) => (
+                <Text key={peer + ':' + project + ':' + kind}>
+                  {project} · {BLOQUES[kind as keyof typeof BLOQUES] ?? kind} · {mode === 'work' ? 'Trabajo' : 'Lectura'}
+                  {' '}· {peer.slice(0, 12)} · vence {hhmm(until * 1000)}
+                </Text>
+              ))}
+              {[...new Set(dispositivos?.grants.map(([peer]) => peer))].map(peer => (
+                <Button key={'dispositivos:revocar:' + peer} plain onPress={() => operarDispositivo($, 'revoke', [peer])}>
+                  Revocar permisos de {peer.slice(0, 12)}
+                </Button>
+              ))}
+            </Box>
+          </Box>
+        )}
+
+        {(vistaActual === 'usar' || vistaActual === 'enviar') && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>{vistaActual === 'usar' ? 'Usar una invitación' : 'Preparar un envío'}</Text>
+            {!envio.length && <Text dimColor>Presioná Enter para guardar cada campo.</Text>}
+            {!envio.length && (
+              <Box flexDirection="column">
+                {camposDestino.map(([id, label]) => (
+                  <Input key={'dispositivo:destino:' + id} label={label} value={formulario[id]} submitLabel="Guardar"
+                    onSubmit={value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false }))} />
+                ))}
+                <Button key="dispositivos:coincide-destino" plain onPress={() =>
+                  update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
+                  {formulario.coincide ? '☑' : '☐'} Comparé la huella con la otra PC
+                </Button>
+                {vistaActual === 'usar' ? (
+                  <Input key="dispositivo:codigo" label="Código temporal" value={formulario.codigo} submitLabel="Guardar"
+                    onSubmit={value => update($, formularioDispositivo, f => ({ ...f, codigo: value }))} />
+                ) : (
+                  <Box flexDirection="column">
+                    <Input key="dispositivo:proyecto" label="Identificador del proyecto" value={formulario.proyecto} submitLabel="Guardar"
+                      onSubmit={value => update($, formularioDispositivo, f => ({ ...f, proyecto: value }))} />
+                    {bloques.map(([id, nombre]) => (
+                      <Button key={'dispositivo:bloque:' + id} plain onPress={() =>
+                        update($, formularioDispositivo, f => ({ ...f, bloque: id, valor: '', revision: '' }))}>
+                        {formulario.bloque === id ? '●' : '○'} {nombre}
+                      </Button>
+                    ))}
+                    {formulario.bloque === 'test_result' ? (
+                      <Box flexDirection="column">
+                        <Input key="dispositivo:aprobadas" label="Pruebas aprobadas" value={formulario.valor} submitLabel="Guardar"
+                          onSubmit={value => update($, formularioDispositivo, f => ({ ...f, valor: value }))} />
+                        <Input key="dispositivo:fallidas" label="Pruebas fallidas" value={formulario.revision} submitLabel="Guardar"
+                          onSubmit={value => update($, formularioDispositivo, f => ({ ...f, revision: value }))} />
+                      </Box>
+                    ) : (
+                      <Box flexDirection="column">
+                        {(formulario.bloque === 'status' ?
+                          [['queued', 'En cola'], ['running', 'En curso'], ['finished', 'Terminado'], ['blocked', 'Bloqueado']] :
+                          [['review', 'Revisar código'], ['test', 'Ejecutar pruebas'], ['develop', 'Implementar']]).map(([id, label]) => (
+                          <Button key={'dispositivo:valor:' + id} plain onPress={() =>
+                            update($, formularioDispositivo, f => ({ ...f, valor: id ?? '' }))}>
+                            {formulario.valor === id ? '●' : '○'} {label}
+                          </Button>
+                        ))}
+                        {formulario.bloque === 'work_request' && (
+                          <Input key="dispositivo:revision" label="Commit completo" value={formulario.revision} submitLabel="Guardar"
+                            onSubmit={value => update($, formularioDispositivo, f => ({ ...f, revision: value }))} />
+                        )}
+                      </Box>
+                    )}
+                  </Box>
+                )}
+                <Button key="dispositivos:previa" onPress={() => plantearEnvioDispositivo($, vistaActual === 'usar')}>Ver antes de enviar</Button>
+              </Box>
+            )}
+            {!!envio.length && (
+              <Box flexDirection="column">
+                <Text bold>Vista previa</Text>
+                <Text>Destino: {envio[0]}:{envio[1]} · huella {envio[2]}</Text>
+                {envio[4] !== 'pair' && <Text>Proyecto: {envio[3]}</Text>}
+                <Text>{describirBloque(envio[4] ?? '', envio[5] ?? '')}</Text>
+                <Button key="dispositivos:enviar" variant="primary" onPress={press => { if (press.surface === 'terminal' || press.surface === 'desktop') return operarDispositivo($, 'send', envio) }}>Enviar</Button>
+                <Button key="dispositivos:cancelar" plain onPress={() => update($, envioDispositivo, () => [])}>Volver a editar</Button>
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {vistaActual === 'actividad' && (
+          <Box flexDirection="column" gap={1}>
+            <Box flexDirection="column">
+              <Text bold>Mensajes recibidos</Text>
+              {!dispositivos?.inbox.length && <Text dimColor>Todavía no recibiste mensajes.</Text>}
+              {dispositivos?.inbox.map(([project, kind, data]) => (
+                <Text>{project} · {BLOQUES[kind as keyof typeof BLOQUES] ?? kind} · {describirBloque(kind, data)}</Text>
+              ))}
+            </Box>
+            <Box flexDirection="column">
+              <Text bold>Alertas de las últimas 24 horas</Text>
+              {!alertas.length && <Text dimColor>No hay alertas visibles.</Text>}
+              {alertas.map(([rule, peer, total, at]) => (
+                <Text key={rule + peer} color={th.warn}>
+                  {ALERTAS[rule] ?? rule} · {peer.length === 64 ? peer.slice(0, 12) : peer}
+                  {' '}· {total} {total === 1 ? 'evento' : 'eventos'} · {hhmm(at * 1000)}
+                </Text>
+              ))}
+            </Box>
           </Box>
         )}
       </Box>

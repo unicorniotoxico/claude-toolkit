@@ -70,7 +70,15 @@ export type SolicitudHerramientas = {
   resultados?: Array<Herramienta & ResultadoHerramienta>
 }
 
+export type FormularioDispositivo = {
+  host: string; puerto: string; huella: string; codigo: string; proyecto: string
+  valor: string; revision: string; minutos: string; coincide: boolean
+  bloque: 'status' | 'test_result' | 'work_request'
+}
+export type VistaDispositivos = 'inicio' | 'usar' | 'permisos' | 'enviar' | 'actividad' | 'configuracion'
 export type EstadoDispositivos = {
+  conexion?: { estado: 'sin_configurar' | 'invalida' | 'configurada'; huella?: string; puerto?: number }
+
   enabled: boolean
   pending: Array<[string, number]>
   grants: Array<[string, string, string, string, number]>
@@ -110,6 +118,11 @@ declare module 'claude-code' {
       preferenciasSeguridad: PreferenciasSeguridad
       estadoMonitor: string
       envioDispositivo: string[]
+      vistaDispositivo: VistaDispositivos
+      formularioDispositivo: FormularioDispositivo
+      peerDispositivo: string
+      codigoDispositivo: string
+      mensajeDispositivo: string
     }
   }
 }
