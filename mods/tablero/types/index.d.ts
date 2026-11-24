@@ -70,6 +70,15 @@ export type SolicitudHerramientas = {
   resultados?: Array<Herramienta & ResultadoHerramienta>
 }
 
+export type EstadoDispositivos = {
+  enabled: boolean
+  pending: Array<[string, number]>
+  grants: Array<[string, string, string, string, number]>
+  inbox: Array<[string, string, string]>
+  alerts: Array<[string, string, number, number]>
+}
+export type PreferenciasSeguridad = { monitor: boolean; rdp: boolean; salida: boolean; puerto: boolean }
+
 declare module 'claude-code' {
   interface PluginState {
     tablero: {
@@ -96,7 +105,11 @@ declare module 'claude-code' {
       detallesHerramientas: string[]
       excluidasHerramientas: string[]
       seccionesAbiertas: string[]
-      tab: 'general' | 'agentes'
+      tab: 'general' | 'agentes' | 'dispositivos' | 'preferencias'
+      estadoDispositivos: EstadoDispositivos | null
+      preferenciasSeguridad: PreferenciasSeguridad
+      estadoMonitor: string
+      envioDispositivo: string[]
     }
   }
 }

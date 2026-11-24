@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRun, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
+import type { AgentRun, EstadoDispositivos, PreferenciasSeguridad, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
 import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
 import { leerPropuesta } from './herramientas'
 import { Equipos, planValidado, promptTarea, TIPOS } from './equipos'
@@ -43,6 +43,11 @@ const avisosHerramientas = atom({ plugin: 'tablero', key: 'avisosHerramientas' }
 const solicitudHerramientas = atom({ plugin: 'tablero', key: 'solicitudHerramientas' } as const, null)
 const detallesHerramientas = atom({ plugin: 'tablero', key: 'detallesHerramientas' } as const, [])
 const excluidasHerramientas = atom({ plugin: 'tablero', key: 'excluidasHerramientas' } as const, [])
+const estadoDispositivos = atom({ plugin: 'tablero', key: 'estadoDispositivos' } as const, null)
+const preferenciasSeguridad = atom({ plugin: 'tablero', key: 'preferenciasSeguridad' } as const,
+  { monitor: false, rdp: true, salida: true, puerto: true })
+const estadoMonitor = atom({ plugin: 'tablero', key: 'estadoMonitor' } as const, '')
+const envioDispositivo = atom({ plugin: 'tablero', key: 'envioDispositivo' } as const, [])
 const showIdle = atom({ plugin: 'tablero', key: 'showIdle' } as const, false)
 
 // Temas: colores de títulos, barras y estados. 'claude' sigue el tema de Claude Code (claro u oscuro).
@@ -335,9 +340,63 @@ async function refreshAll($: EngineInterface) {
   await update($, updatedAt, () => now)
 }
 
+async function gateway($: EngineInterface, action: string, args: string[] = []) {
+  const base = $.plugin.root + '/../../memory-engine'
+  const result = await $.process.run([base + '/' + venvPython, '-I', $.plugin.root + '/scripts/device_gateway.py',
+    base + '/data/dispositivos', action, ...(action === 'send' ? [] : args)], {
+    timeoutMs: 16_000, stdin: action === 'send' ? JSON.stringify(args) : undefined,
+  })
+  if (result.exitCode !== 0 || result.isStdoutTruncated) throw new Error('No se pudo completar la operación.')
+  return JSON.parse(result.stdout)
+}
+
+async function refrescarSeguridad($: EngineInterface, monitor = false) {
+  try {
+    const prefs = await read($, preferenciasSeguridad)
+    if (monitor && prefs.monitor) {
+      const info = await gateway($, 'local-events')
+      await update($, estadoMonitor, () => String(info.status))
+    }
+    const estado = await gateway($, 'snapshot') as EstadoDispositivos
+    const anterior = await read($, estadoDispositivos)
+    await update($, estadoDispositivos, () => estado)
+    if (estado.alerts.some(([rule, peer, total, at]) =>
+      (rule === 'remote_logon' ? prefs.rdp : rule === 'outbound_review' ? prefs.salida : prefs.puerto) &&
+      !anterior?.alerts.some(([r, p, n, previous]) => r === rule && p === peer && n === total && previous === at)))
+      $.ui.toast('Actividad para revisar en Dispositivos → Alertas.')
+  } catch {
+    await update($, estadoMonitor, () => 'No se pudo consultar la auditoría local.')
+  }
+}
+
+async function cambiarSeguridad($: EngineInterface, key: keyof PreferenciasSeguridad) {
+  const prefs = await update($, preferenciasSeguridad, current => ({ ...current, [key]: !current[key] }))
+  try { await $.store.set('preferenciasSeguridad', prefs) } catch {}
+  if (key === 'monitor') once('seguridad', () => refrescarSeguridad($, true))
+}
+
+async function operarDispositivo($: EngineInterface, action: string, args: string[]) {
+  try {
+    const result = await gateway($, action, args)
+    if (action === 'send') {
+      await update($, envioDispositivo, () => [])
+      void $.ui.toast(result.status === 202 ? 'Recibido por el otro dispositivo.' : 'El receptor rechazó el envío: HTTP ' + result.status)
+    } else if (action === 'grant' || action === 'reject' || action === 'revoke') {
+      void $.ui.toast('Permisos actualizados en este dispositivo.')
+    }
+    await refrescarSeguridad($)
+  } catch {
+    void $.ui.toast('La operación no se pudo completar. Revisá configuración, huellas y estado del receptor.')
+  }
+}
+
 function startTimers($: EngineInterface) {
   for (const t of timers.splice(0)) t.cancel()
   timers.push(
+    $.clock.every(60_000, () => once('seguridad', async () => {
+      if ((await read($, preferenciasSeguridad)).monitor || await read($, estadoDispositivos))
+        await refrescarSeguridad($, true)
+    })),
     $.clock.every(USAGE_MS, () => once('usage', () => refreshUsage($).then(() => readSessions($)))),
     $.clock.every(CLOCK_MS, () =>
       once('clock', async () => {
@@ -549,6 +608,40 @@ export const register: Register = on => {
     ).join('\n') : 'Todavía no hay equipos en esta sesión.' }
   })
 
+  on('command.run', { command: 'dispositivos' }, async ($, e) => {
+    if (e.origin.kind !== 'composer') return { text: 'Abrí este comando desde la terminal local.' }
+    const args = e.args.trim().split(/\s+/)
+    if (args[0] === 'enviar') {
+      const [_, host, port, peer, project, kind, ...values] = args
+      const data = kind === 'status' ? { state: values[0] } :
+        kind === 'test_result' ? { passed: Number(values[0]), failed: Number(values[1]) } :
+        kind === 'work_request' ? { operation: values[0], revision: values[1] } : { code: values[0] }
+      if (!host || !port || !peer || !project || !['pair', 'status', 'test_result', 'work_request'].includes(kind ?? ''))
+        return { text: 'Uso: /dispositivos enviar HOST PUERTO HUELLA PROYECTO TIPO [valores]' }
+      await update($, envioDispositivo, () => [host, port, peer, project, kind, JSON.stringify(data)])
+    } else if (args[0] === 'permitir') {
+      if (args.length !== 6) return { text: 'Uso: /dispositivos permitir HUELLA PROYECTO BLOQUE read|work MINUTOS' }
+      await operarDispositivo($, 'grant', args.slice(1))
+    } else if (args[0] === 'rechazar' || args[0] === 'revocar') {
+      await operarDispositivo($, args[0] === 'rechazar' ? 'reject' : 'revoke', args.slice(1))
+    } else if (args[0] === 'invitar') {
+      try {
+        const invitation = await gateway($, 'invite')
+        return { text: 'Invitación válida por cinco minutos: ' + invitation.code }
+      } catch { return { text: 'Activá el enlace local y volvé a intentar.' } }
+    } else if (args[0] === 'huella') {
+      try { return { text: String((await gateway($, 'identity')).fingerprint) } }
+      catch { return { text: 'Configurá primero el certificado de este dispositivo.' } }
+    } else if (args[0] === 'buscar') {
+      try { return { text: JSON.stringify(await gateway($, 'audit', args.slice(1))) } }
+      catch { return { text: 'Usá un código de evento, proyecto o huella para buscar.' } }
+    }
+    await update($, tab, () => 'dispositivos')
+    void $.ui.open({ id: PANE, title: TITLE }).catch(() => {})
+    await refrescarSeguridad($)
+    return { text: 'Dispositivos. Usá enviar, permitir, rechazar, revocar, invitar, huella o buscar.' }
+  })
+
   on('tool.run', { tool: HERRAMIENTAS }, async ($, e) => {
     const seleccionado = await read($, mode)
     if (e.agentId || (seleccionado !== 'desarrollo' && seleccionado !== 'ambos'))
@@ -683,6 +776,7 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     await iniciarDesarrollo($)
+    await $.command.register({ name: 'dispositivos', description: 'Gestiona el enlace y la auditoría de dispositivos' })
     await $.command.register({ name: 'tablero', description: 'Abre el tablero de gasto, agentes, herramientas y memoria' })
     await $.command.register({ name: 'modo', description: 'Elige el modo de la sesión: ciberseguridad, desarrollo o ambos' })
     const ran = await next(e)
@@ -728,9 +822,17 @@ export const register: Register = on => {
       }
     } catch {}
     try {
+      const saved = await $.store.get('preferenciasSeguridad') as Partial<PreferenciasSeguridad> | undefined
+      if (saved) await update($, preferenciasSeguridad, current => ({
+        monitor: saved.monitor === true, rdp: saved.rdp ?? current.rdp,
+        salida: saved.salida ?? current.salida, puerto: saved.puerto ?? current.puerto,
+      }))
+    } catch {}
+    try {
       if ((await $.store.get('avisosHerramientas')) === false)
         await update($, avisosHerramientas, () => false)
     } catch {}
+    if ((await read($, preferenciasSeguridad)).monitor) once('seguridad', () => refrescarSeguridad($, true))
     void $.ui.open({ id: PANE, title: TITLE }) // se abre solo; /tablero lo reabre si se cerró
     startTimers($)
     once('all', () => refreshAll($))
@@ -931,6 +1033,12 @@ export const register: Register = on => {
     const detalles = await read($, detallesHerramientas)
     const excluidas = await read($, excluidasHerramientas)
     const avisos = await read($, avisosHerramientas)
+    const seguridad = await read($, preferenciasSeguridad)
+    const dispositivos = await read($, estadoDispositivos)
+    const monitor = await read($, estadoMonitor)
+    const envio = await read($, envioDispositivo)
+    const alertas = dispositivos?.alerts.filter(([rule]) => rule === 'remote_logon' ? seguridad.rdp :
+      rule === 'outbound_review' ? seguridad.salida : seguridad.puerto) ?? []
     const abiertas = await read($, seccionesAbiertas)
     const abierta = (id: string) => abiertas.includes(id)
     const flecha = (id: string) => abierta(id) ? '▾' : '▸'
@@ -1138,6 +1246,83 @@ export const register: Register = on => {
       </Box>
     )
 
+    const vistaPreferencias = tabActual === 'preferencias' && (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column">
+          <Text bold color={th.accent}>Seguridad de esta PC</Text>
+          <Button key="seguridad:monitor" plain onPress={() => cambiarSeguridad($, 'monitor')}>
+            {seguridad.monitor ? '☑' : '☐'} Monitorear eventos de Windows
+          </Button>
+          <Button key="seguridad:rdp" plain onPress={() => cambiarSeguridad($, 'rdp')}>
+            {seguridad.rdp ? '☑' : '☐'} Avisos de acceso remoto
+          </Button>
+          <Button key="seguridad:salida" plain onPress={() => cambiarSeguridad($, 'salida')}>
+            {seguridad.salida ? '☑' : '☐'} Avisos de actividad saliente
+          </Button>
+          {seguridad.monitor && <Text dimColor>{monitor || 'Esperando la primera lectura.'}</Text>}
+        </Box>
+        <Box flexDirection="column">
+          <Text bold color={th.accent}>Dispositivos</Text>
+          <Button key="seguridad:puerto" plain onPress={() => cambiarSeguridad($, 'puerto')}>
+            {seguridad.puerto ? '☑' : '☐'} Avisos del puerto y del enlace
+          </Button>
+        </Box>
+        <Box flexDirection="column">
+          <Text bold color={th.accent}>Herramientas</Text>
+          <Button key="preferencias:herramientas" plain onPress={() => configurarAvisos($, !avisos)}>
+            {avisos ? '☑' : '☐'} Avisos para instalar herramientas
+          </Button>
+        </Box>
+        <Box flexDirection="column">
+          <Text bold color={th.accent}>Privacidad y registros</Text>
+          <Text dimColor>Auditoría local FTS5 · retención de 30 días · fuera de la memoria de Claude.</Text>
+        </Box>
+        <Button key="preferencias:apariencia" plain onPress={async () => {
+          await update($, tab, () => 'general')
+          await update($, seccionesAbiertas, ids => ids.includes('apariencia') ? ids : [...ids, 'apariencia'])
+        }}>Abrir Apariencia</Button>
+      </Box>
+    )
+
+    const vistaDispositivos = tabActual === 'dispositivos' && (
+      <Box flexDirection="column" gap={1}>
+        <Box flexWrap="wrap" flexDirection="row" gap={1}>
+          <Button key="dispositivos:actualizar" onPress={() => refrescarSeguridad($)}>Actualizar</Button>
+          <Button key="dispositivos:enlace" onPress={() => operarDispositivo($, 'link', [dispositivos?.enabled ? 'off' : 'on'])}>
+            {dispositivos?.enabled ? 'Desactivar enlace' : 'Activar enlace'}
+          </Button>
+        </Box>
+        <Box flexDirection="column">
+          <Text bold color={th.accent}>Solicitudes de conexión</Text>
+          {dispositivos?.pending.map(([peer]) => <Text key={peer}>{peer}</Text>)}
+          <Text dimColor>Compará la huella por otro canal. Autorizá desde /dispositivos permitir.</Text>
+        </Box>
+        <Box flexDirection="column">
+          <Text bold color={th.accent}>Matriz de permisos entrantes</Text>
+          {dispositivos?.grants.map(([peer, project, kind, mode, until]) =>
+            <Text key={peer + project + kind}>{peer.slice(0, 12)} · {project} · {kind} · {mode} · hasta {hhmm(until * 1000)}</Text>)}
+        </Box>
+        <Box flexDirection="column">
+          <Text bold color={th.accent}>Bandeja recibida</Text>
+          {dispositivos?.inbox.map(([project, kind, data]) => <Text>{project} · {kind} · {data}</Text>)}
+        </Box>
+        <Box flexDirection="column">
+          <Text bold color={th.accent}>Alertas de las últimas 24 horas</Text>
+          {alertas.map(([rule, peer, total, at]) =>
+            <Text key={rule + peer} color={th.warn}>{rule} · {peer.length === 64 ? peer.slice(0, 12) : peer} · {total} · {hhmm(at * 1000)}</Text>)}
+        </Box>
+        {!!envio.length && (
+          <Box flexDirection="column">
+            <Text bold color={th.accent}>Vista previa del envío</Text>
+            <Text>{envio[0]}:{envio[1]} · {envio[2]}</Text>
+            <Text>{envio[3]} · {envio[4]} · {envio[4] === 'pair' ? 'código temporal' : envio[5]}</Text>
+            <Button key="dispositivos:enviar" variant="primary" onPress={() => operarDispositivo($, 'send', envio)}>Enviar</Button>
+            <Button key="dispositivos:cancelar" plain onPress={() => update($, envioDispositivo, () => [])}>Cancelar</Button>
+          </Box>
+        )}
+      </Box>
+    )
+
     const vistaAgentes = tabActual === 'agentes' && (
       <Box flexDirection="column" gap={lk.compacto ? 0 : 1}>
         <Box flexDirection="column">
@@ -1182,16 +1367,17 @@ export const register: Register = on => {
         borderColor={lk.bordes ? th.accent : undefined}
         paddingX={lk.bordes || solid ? 1 : 0}
       >
-        <Box flexDirection="row" gap={1}>
-          {(['general', 'agentes'] as const).map(id => (
+        <Box flexDirection="row" flexWrap="wrap" gap={1}>
+          {(['general', 'agentes', 'dispositivos', 'preferencias'] as const).map(id => (
             <Button key={`tab:${id}`} variant={tabActual === id ? 'primary' : undefined} onPress={async () => {
               if (tabActual === id) return
               await update($, tab, () => id)
+              if (id === 'dispositivos') await refrescarSeguridad($)
               try {
                 await $.ui.scroll({ in: PANE, to: 'start' })
               } catch {}
             }}>
-              {id === 'general' ? 'General' : 'Agentes'}
+              {{ general: 'General', agentes: 'Agentes', dispositivos: 'Dispositivos', preferencias: 'Preferencias' }[id]}
             </Button>
           ))}
         </Box>
@@ -1249,6 +1435,8 @@ export const register: Register = on => {
 
         {general}
         {vistaAgentes}
+        {vistaDispositivos}
+        {vistaPreferencias}
       </Box>
     )
   })
