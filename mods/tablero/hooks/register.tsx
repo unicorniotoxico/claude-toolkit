@@ -6,7 +6,7 @@ import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
 import { ALERTAS, BLOQUES, FORMULARIO_INICIAL, describirBloque, prepararEnvio, validarDestino } from './dispositivos'
 import { ConsumoLocal, sumarConsumos, totalTokens } from './consumo'
 import { leerPropuesta } from './herramientas'
-import { Equipos, planValidado, promptTarea, TIPOS } from './equipos'
+import { Equipos, planValidado, promptTarea, TIPOS, type PlanGuardado } from './equipos'
 
 // Qué se actualiza cómo:
 //  - por eventos: agentes (agent.spawn / classic.SubagentStop / turn.complete del subagente), herramientas y
@@ -760,12 +760,87 @@ async function iniciarDesarrollo($: EngineInterface) {
     prompt: 'Eres un verificador PHP independiente. Traza los caminos del código. Prepara un driver que ejecute los fuentes montados en /app, reemplace dependencias por datos de prueba y devuelva evidencia del comportamiento. No leas credenciales ni copies lógica del producto al driver.',
   })
 }
+let flujo: Equipos | undefined
+let iniciando = false
+let programado: { cancel(): void } | undefined
+let cerrando = false
+const replays = new Set<string>()
+
+let escrituraPlan = Promise.resolve()
+let restauracion: Promise<void> | undefined
+
+async function clavePlan($: EngineInterface) {
+  const id = await $.session.id()
+  return 'equipos:v1:' + id
+}
+
+function guardarPlan($: EngineInterface) {
+  if (!flujo) return
+  const copia = flujo.guardar()
+  const filas = flujo.resumen()
+  escrituraPlan = escrituraPlan.then(async () => {
+    const clave = await clavePlan($)
+    await $.store.set(clave, copia)
+    await update($, equipos, () => filas)
+  }).catch(async () => { await update($, equipos, () => filas).catch(() => {}) })
+}
+
+function motorEquipo($: EngineInterface, root: string, base: string): ConstructorParameters<typeof Equipos>[0] {
+  return {
+    lanzar: (t, evidencia) => {
+      const tipo = t.tipo === 'implementacion' ? 'desarrollo-dev' : t.simulacionPHP ? 'desarrollo-php' : 'desarrollo-verificador'
+      const instrucciones = t.tipo === 'implementacion'
+        ? '\nGuía ub-mode: ' + $.plugin.root + '/skills/ub-mode/SKILL.md. Lee las fases pertinentes. Conserva la entrega local.'
+        : ''
+      return $.agent.spawn({
+        cwd: root,
+        subagentType: 'tablero:' + tipo,
+        description: (t.equipo + ': ' + t.id).slice(0, 100),
+        prompt: promptTarea(t, evidencia) + instrucciones + (base ? '\nCommit base: ' + base : ''),
+      })
+    },
+    actualizar: () => guardarPlan($),
+    aviso: t => { void $.ui.toast(t.equipo + ' · ' + t.id + ': llegó al punto de control. Revisá el avance en /equipos.') },
+    reloj: (ms, callback) => {
+      const timer = $.clock.after(ms, callback)
+      return () => timer.cancel()
+    },
+  }
+}
+
+async function restaurarPlan($: EngineInterface) {
+  if (flujo) return
+  restauracion ??= (async () => {
+    const clave = await clavePlan($)
+    const copia = await $.store.get(clave) as PlanGuardado | undefined
+    if (copia?.version !== 1 || flujo) return
+    const root = await $.session.root()
+    flujo = Equipos.restaurar(motorEquipo($, root, copia.base), copia)
+    await update($, equipos, () => flujo?.resumen() ?? [])
+  })().catch(() => {}).finally(() => { restauracion = undefined })
+  await restauracion
+}
+
 export const register: Register = on => {
-  let flujo: Equipos | undefined
-  let iniciando = false
-  let programado: { cancel(): void } | undefined
-  let cerrando = false
-  const replays = new Set<string>()
+  on('prompt.submit', async ($, e, next) => {
+    const ran = await next(e)
+    if (e.origin.kind === 'composer' && !e.isMeta && !e.command && ran.drop === undefined &&
+        /^(?:continue|continu[aáe]|segu[ií]|reanudar|reanud[aáe])[.!]?$/i.test(e.text.trim())) {
+      once('reanudar-equipos', async () => {
+        await restaurarPlan($)
+        if (!flujo?.activo || cerrando) return
+        const seleccion = await read($, mode)
+        if (seleccion !== 'desarrollo' && seleccion !== 'ambos') return
+        const activo = flujo
+        const root = await $.session.root()
+        const agentesVivos = (await $.agent.list()).filter(a => !DONE.has(a.status))
+        if (flujo !== activo || cerrando) return
+        await activo.reanudar(new Set(agentesVivos.map(a => a.id)), motorEquipo($, root, activo.base))
+        await escrituraPlan
+      })
+    }
+    return ran
+  })
 
   function cerrarDesarrollo() {
     cerrando = true
@@ -773,7 +848,8 @@ export const register: Register = on => {
     flujo?.cerrar()
   }
 
-  on('command.run', { command: 'equipos' }, () => {
+  on('command.run', { command: 'equipos' }, async $ => {
+    await restaurarPlan($)
     const filas = flujo?.resumen() ?? []
     return { text: filas.length ? filas.map(f =>
       f.equipo + ' · ' + f.id + ' · ' + f.estado + (f.demorada ? ' · demorada' : '') +
@@ -849,6 +925,7 @@ export const register: Register = on => {
   on('tool.run', { tool: PLAN }, async ($, e) => {
     const seleccionado = await read($, mode)
     if (e.agentId || (seleccionado !== 'desarrollo' && seleccionado !== 'ambos')) return { deny: 'Solo el orquestador en Desarrollo o Ambos puede gestionar equipos.' }
+    await restaurarPlan($)
     const args = e as unknown as Record<string, unknown>
     if (args.accion === 'estado') {
       const filas = flujo?.resumen(true) ?? []
@@ -859,6 +936,7 @@ export const register: Register = on => {
     try {
       if (args.accion === 'reintentar' && flujo && typeof args.id === 'string' && typeof args.ajuste === 'string') {
         await flujo.reintentar(args.id, args.ajuste)
+        await escrituraPlan
         return { result: JSON.stringify(flujo.resumen()) }
       }
       if (args.accion !== 'iniciar') return { deny: 'Acción inválida.' }
@@ -875,28 +953,10 @@ export const register: Register = on => {
         const base = await $.process.run(['git', '-C', root, 'rev-parse', '--verify', 'HEAD'], { timeoutMs: 5000 })
           .then(r => r.exitCode === 0 ? r.stdout.trim() : '', () => '')
         flujo?.cerrar()
-        const nuevo: Equipos = new Equipos({
-          lanzar: (t, evidencia) => {
-            const tipo = t.tipo === 'implementacion' ? 'desarrollo-dev' : t.simulacionPHP ? 'desarrollo-php' : 'desarrollo-verificador'
-            const instrucciones = t.tipo === 'implementacion'
-              ? '\nGuía ub-mode: ' + $.plugin.root + '/skills/ub-mode/SKILL.md. Lee las fases pertinentes. Conserva la entrega local.'
-              : ''
-            return $.agent.spawn({
-              cwd: root,
-              subagentType: 'tablero:' + tipo,
-              description: (t.equipo + ': ' + t.id).slice(0, 100),
-              prompt: promptTarea(t, evidencia) + instrucciones + (base ? '\nCommit base: ' + base : ''),
-            })
-          },
-          actualizar: () => { void update($, equipos, () => nuevo.resumen()) },
-          aviso: t => { void $.ui.toast(t.equipo + ' · ' + t.id + ': llegó al punto de control. Revisá el avance en /equipos.') },
-          reloj: (ms, callback) => {
-            const timer = $.clock.after(ms, callback)
-            return () => timer.cancel()
-          },
-        }, plan, n, minutos * 60_000, base)
-        flujo = nuevo
+        flujo = new Equipos(motorEquipo($, root, base), plan, n, minutos * 60_000, base)
+        guardarPlan($)
         await flujo.avanzar()
+        await escrituraPlan
         return { result: JSON.stringify(flujo.resumen()) }
       } finally {
         iniciando = false
@@ -1010,6 +1070,7 @@ export const register: Register = on => {
     void $.ui.open({ id: PANE, title: TITLE }) // se abre solo; /tablero lo reabre si se cerró
     startTimers($)
     once('all', () => refreshAll($))
+    await restaurarPlan($)
     return ran
   })
 
@@ -1024,6 +1085,7 @@ export const register: Register = on => {
     cerrarDesarrollo()
     for (const t of timers.splice(0)) t.cancel()
     try {
+      await escrituraPlan
       await publish($, true)
     } catch {}
     return next(e)
@@ -1135,14 +1197,16 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const ran = await next(e)
-    if (e.agentId && flujo?.terminar(e.agentId, e.answer, e.reason) && !programado && !cerrando) {
+    if (e.agentId && flujo?.terminar(e.agentId, e.answer, e.reason, e.isAborted) && !programado && !cerrando) {
       programado = $.clock.after(20, async () => {
         programado = undefined
         await flujo?.avanzar()
+        await escrituraPlan
       })
     }
     try {
       if (e.agentId) {
+        await escrituraPlan
         await finishAgent($, e.agentId, e.isAborted ? 'killed' : 'completed')
       } else {
         once('all', () => refreshAll($))
@@ -1929,7 +1993,7 @@ export const register: Register = on => {
           <Box flexDirection="column">
             <Text bold color={th.accent}>Equipos de desarrollo</Text>
             {filasEquipos.map(f => (
-              <Text key={f.id} color={f.demorada || f.estado === 'pendiente' ? th.warn : undefined}>
+              <Text key={f.id} color={f.demorada || f.estado === 'pendiente' || f.estado === 'pausada' ? th.warn : undefined}>
                 {f.equipo} · {f.id} · {f.estado}{f.demorada ? ' · demorada' : ''}
                 {f.verificacion ? ' · PHP ' + f.verificacion : ''}
               </Text>

@@ -104,3 +104,44 @@ test('Go y Visual Basic usan el verificador genérico y sus propios comandos', a
   plan.terminar('vb', 'RESULTADO: OK', 'answer')
   expect(plan.resumen().map(t => t.estado)).toEqual(['correcto', 'correcto'])
 })
+
+test('reanuda solo la tarea interrumpida y preserva la terminada y la que sigue activa', async () => {
+  const { plan, lanzadas } = correr([tarea('hecha'), tarea('cortada'), tarea('activa'), tarea('dep', { depende: ['cortada'] })])
+  await plan.avanzar()
+  plan.terminar('hecha', 'RESULTADO: OK', 'answer')
+  await plan.avanzar()
+  plan.terminar('cortada', '', 'abort', true)
+  await plan.avanzar()
+  expect(plan.resumen().map(t => t.estado)).toEqual(['correcto', 'pausada', 'en curso', 'en cola'])
+  await plan.reanudar(new Set(['activa']))
+  expect(lanzadas).toEqual(['hecha', 'cortada', 'activa', 'cortada'])
+  expect(plan.resumen().map(t => t.estado)).toEqual(['correcto', 'en curso', 'en curso', 'en cola'])
+  plan.terminar('cortada', 'RESULTADO: OK', 'answer')
+  await plan.avanzar()
+  expect(lanzadas.at(-1)).toBe('dep')
+})
+
+test('restaura el plan guardado y distingue ausencia de evidencia de una interrupción', async () => {
+  const { plan } = correr([tarea('hecha'), tarea('cortada'), tarea('sin-evidencia', { tipo: 'verificacion' })])
+  await plan.avanzar()
+  plan.terminar('hecha', 'RESULTADO: OK', 'answer')
+  await plan.avanzar()
+  plan.terminar('sin-evidencia', 'RESULTADO: OK', 'answer')
+  const lanzadas: string[] = []
+  const copia = JSON.parse(JSON.stringify(plan.guardar()))
+  const nuevo = Equipos.restaurar({
+    lanzar: async (t, evidencia) => {
+      lanzadas.push(t.id)
+      expect(evidencia).toContain('cambios existentes')
+      return { agentId: t.id + '-nuevo' }
+    },
+    actualizar: () => {},
+    aviso: () => {},
+    reloj: () => () => {},
+  }, copia)
+  expect(nuevo.resumen().map(t => t.estado)).toEqual(['correcto', 'en curso', 'pendiente'])
+  expect(lanzadas).toEqual([])
+  await nuevo.reanudar(new Set())
+  expect(lanzadas).toEqual(['cortada'])
+  expect(nuevo.resumen().map(t => t.estado)).toEqual(['correcto', 'en curso', 'pendiente'])
+})

@@ -1,6 +1,6 @@
 export const TIPOS = ['preparacion', 'implementacion', 'verificacion', 'integracion'] as const
 type Tipo = typeof TIPOS[number]
-type Estado = 'en cola' | 'en curso' | 'correcto' | 'falló' | 'pendiente' | 'bloqueado'
+type Estado = 'en cola' | 'en curso' | 'correcto' | 'falló' | 'pendiente' | 'bloqueado' | 'pausada'
 
 export interface Tarea {
   id: string
@@ -19,6 +19,14 @@ interface Ejecucion extends Tarea {
   comprobaciones?: string[]
   simulacion?: { estado: string; evidencia?: string; detalle?: string }
   cancelarAviso?: () => void
+}
+
+export type PlanGuardado = {
+  version: 1
+  max: number
+  checkpoint: number
+  base: string
+  tareas: Omit<Ejecucion, 'cancelarAviso'>[]
 }
 
 const LIMITE_TAREAS = 12
@@ -77,14 +85,48 @@ export class Equipos {
   private tareas = new Map<string, Ejecucion>()
   private lanzando = false
   private cerrado = false
-  private resultadosTempranos = new Map<string, { texto: string; motivo: string }>()
+  private resultadosTempranos = new Map<string, { texto: string; motivo: string; interrumpido: boolean }>()
 
   constructor(private motor: Motor, tareas: Tarea[], private max: number, private checkpoint: number, readonly base: string) {
     for (const t of tareas) this.tareas.set(t.id, { ...t, estado: 'en cola' })
   }
 
+  guardar(): PlanGuardado {
+    return {
+      version: 1, max: this.max, checkpoint: this.checkpoint, base: this.base,
+      tareas: [...this.tareas.values()].map(({ cancelarAviso, ...t }) => t),
+    }
+  }
+
+  static restaurar(motor: Motor, copia: PlanGuardado) {
+    const plan = new Equipos(motor, planValidado(copia.tareas), copia.max, copia.checkpoint, copia.base)
+    for (const t of copia.tareas) Object.assign(plan.tareas.get(t.id)!, t)
+    return plan
+  }
+
+  async reanudar(activos: ReadonlySet<string>, motor = this.motor) {
+    if (this.cerrado || this.lanzando) return
+    this.motor = motor
+    for (const t of this.tareas.values()) {
+      if (t.estado !== 'pausada' && t.estado !== 'en curso') continue
+      if (t.agente && activos.has(t.agente)) {
+        t.estado = 'en curso'
+        continue
+      }
+      t.cancelarAviso?.()
+      t.cancelarAviso = undefined
+      t.estado = 'en cola'
+      t.agente = undefined
+      t.demorada = undefined
+      t.comprobaciones = undefined
+      t.simulacion = undefined
+      t.informe = 'Retomá la tarea a partir de los cambios existentes y verificá qué falta.'
+    }
+    await this.avanzar()
+  }
+
   get activo() {
-    return [...this.tareas.values()].some(t => t.estado === 'en curso' || t.estado === 'en cola')
+    return [...this.tareas.values()].some(t => t.estado === 'en curso' || t.estado === 'en cola' || t.estado === 'pausada')
   }
 
   resumen(detalle = false) {
@@ -96,7 +138,7 @@ export class Equipos {
   }
 
   async avanzar() {
-    if (this.lanzando || this.cerrado) return
+    if (this.lanzando || this.cerrado || [...this.tareas.values()].some(t => t.estado === 'pausada')) return
     this.lanzando = true
     try {
       for (const t of this.tareas.values()) {
@@ -106,7 +148,8 @@ export class Equipos {
       while (cambio) {
         cambio = false
         for (const t of this.tareas.values()) {
-          if (this.cerrado || t.estado !== 'en cola') continue
+          if (this.cerrado || [...this.tareas.values()].some(d => d.estado === 'pausada')) return
+          if (t.estado !== 'en cola') continue
           const deps = t.depende.map(id => this.tareas.get(id)!)
           if (deps.some(d => d.estado === 'falló' || d.estado === 'pendiente' || d.estado === 'bloqueado')) {
             t.estado = 'bloqueado'
@@ -120,7 +163,8 @@ export class Equipos {
           if (activos.length >= this.max || conflicto || deps.some(d => d.estado !== 'correcto')) continue
           t.estado = 'en curso'
           cambio = true
-          const evidencia = deps.map(d => d.id + ': ' + (d.informe ?? '').slice(0, 450)).join('\n').slice(0, 1600)
+          const evidencia = [t.informe, ...deps.map(d => d.id + ': ' + (d.informe ?? '').slice(0, 450))]
+            .filter(Boolean).join('\n').slice(0, 1600)
           try {
             const lanzado = await this.motor.lanzar(t, evidencia)
             if (!lanzado.agentId) throw new Error(lanzado.deny || 'El motor no devolvió un agente.')
@@ -128,7 +172,7 @@ export class Equipos {
             const resultado = this.resultadosTempranos.get(t.agente)
             if (resultado) {
               this.resultadosTempranos.delete(t.agente)
-              this.terminar(t.agente, resultado.texto, resultado.motivo)
+              this.terminar(t.agente, resultado.texto, resultado.motivo, resultado.interrumpido)
             }
             if (!this.cerrado && t.estado === 'en curso') t.cancelarAviso = this.motor.reloj(this.checkpoint, () => {
               if (t.estado !== 'en curso' || this.cerrado) return
@@ -152,7 +196,7 @@ export class Equipos {
 
   buscar(agente: string | undefined) {
     if (!agente) return undefined
-    return [...this.tareas.values()].find(t => t.agente === agente && t.estado === 'en curso')
+    return [...this.tareas.values()].find(t => t.agente === agente && (t.estado === 'en curso' || t.estado === 'pausada'))
   }
 
   comando(agente: string, comando: string) {
@@ -161,18 +205,20 @@ export class Equipos {
       t.comprobaciones = [...(t.comprobaciones ?? []), comando.slice(0, 180)].slice(-3)
   }
 
-  terminar(agente: string, texto: string, motivo: string) {
+  terminar(agente: string, texto: string, motivo: string, interrumpido = false) {
     const t = this.buscar(agente)
     if (this.cerrado) return false
     if (!t) {
       if (this.lanzando && this.resultadosTempranos.size < LIMITE_TAREAS)
-        this.resultadosTempranos.set(agente, { texto, motivo })
+        this.resultadosTempranos.set(agente, { texto, motivo, interrumpido })
       return false
     }
     const resultado = /(?:^|\n)RESULTADO:\s*(OK|FALLO|PENDIENTE)\s*(?:\n|$)/i.exec(texto)?.[1]?.toUpperCase()
     t.cancelarAviso?.()
+    t.cancelarAviso = undefined
     t.informe = texto.trim().slice(0, 1100) || motivo
-    if (motivo !== 'answer' || resultado === 'PENDIENTE' || !resultado) t.estado = 'pendiente'
+    if (interrumpido) t.estado = 'pausada'
+    else if (motivo !== 'answer' || resultado === 'PENDIENTE' || !resultado) t.estado = 'pendiente'
     else if (resultado === 'FALLO' || t.simulacion?.estado === 'diferencias') t.estado = 'falló'
     else if (t.simulacionPHP && t.simulacion?.estado !== 'verificado') t.estado = 'pendiente'
     else if ((t.tipo === 'verificacion' || t.tipo === 'integracion') &&
