@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { Equipos, planValidado, type Tarea } from './equipos'
+import { Equipos, planValidado, promptTarea, type Tarea } from './equipos'
 
 const tarea = (id: string, otros: Partial<Tarea> = {}): Tarea => ({
   id, equipo: id, tipo: 'implementacion', objetivo: 'Criterio verificable',
@@ -83,4 +83,24 @@ test('una corrección invalida solo las etapas dependientes ya terminadas', asyn
   await plan.reintentar('dev', 'Arreglar el caso observado')
   expect(plan.resumen().map(t => t.estado)).toEqual(['en curso', 'correcto', 'en cola'])
   expect(lanzadas).toEqual(['dev', 'ficha', 'verificar', 'dev'])
+})
+
+
+test('Go y Visual Basic usan el verificador genérico y sus propios comandos', async () => {
+  const tareas = [
+    tarea('go', { tipo: 'verificacion', archivos: ['go.mod', 'main.go'] }),
+    tarea('vb', { tipo: 'verificacion', archivos: ['App.vbproj', 'Main.vb'] }),
+  ]
+  const { plan, lanzadas } = correr(tareas)
+  await plan.avanzar()
+  expect(lanzadas).toEqual(['go', 'vb'])
+  for (const t of tareas) {
+    expect(promptTarea(t, '')).toContain('comandos nativos')
+    expect(promptTarea(t, '')).not.toContain('php_replay')
+  }
+  plan.comando('go', 'go test ./...')
+  plan.comando('vb', 'dotnet test')
+  plan.terminar('go', 'RESULTADO: OK', 'answer')
+  plan.terminar('vb', 'RESULTADO: OK', 'answer')
+  expect(plan.resumen().map(t => t.estado)).toEqual(['correcto', 'correcto'])
 })

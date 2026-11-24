@@ -424,14 +424,18 @@ async function iniciarDesarrollo($: EngineInterface) {
   })
   const comunes = { omitClaudeMd: true as const, maxTurns: 10 }
   const lectura = ['Read', 'Grep', 'Glob']
+  const terminales = (await $.tool.list().catch(() => []))
+    .filter(t => t.name === 'Bash' || t.name === 'PowerShell')
+    .map(t => t.name)
+  if (!terminales.length) terminales.push('Bash')
   await $.agent.register({ ...comunes, name: 'desarrollo-dev', model: 'sonnet', maxTurns: 24,
     description: 'Implementa una pieza del plan de Desarrollo.',
-    tools: [...lectura, 'Edit', 'Write', 'Bash'],
+    tools: [...lectura, 'Edit', 'Write', ...terminales],
     prompt: 'Implementas una sola tarea del orquestador. Respeta sus rutas y criterios. Consulta las etapas pertinentes de ub-mode y devuelve evidencia compacta.',
   })
   await $.agent.register({ ...comunes, name: 'desarrollo-verificador', model: 'haiku',
     description: 'Prepara evidencia o verifica un requisito concreto.',
-    tools: [...lectura, 'Bash'],
+    tools: [...lectura, ...terminales],
     prompt: 'Eres un verificador independiente. Usa análisis estático o comandos de prueba offline acotados. No modifiques el producto. Informa solo evidencia observada.',
   })
   await $.agent.register({ ...comunes, name: 'desarrollo-php', model: 'haiku',

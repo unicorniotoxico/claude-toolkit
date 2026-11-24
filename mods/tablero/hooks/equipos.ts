@@ -227,6 +227,7 @@ export function promptTarea(t: Tarea, evidencia: string) {
   }[t.tipo]
   return [
     'Aplica la fase pertinente de ub-mode. Trabaja solo en el alcance dado y evita repetir comprobaciones verificadas.',
+    'Detecta el lenguaje y la plataforma por los archivos, manifiestos y CI del componente afectado. Usa sus comandos nativos de prueba y compilación. Si falta el entorno, informa la comprobación pendiente.',
     especialidad,
     'No publiques ni despliegues. Verificación: no uses servicios reales ni toques archivos del producto.',
     'Equipo: ' + t.equipo, 'Objetivo y criterio: ' + t.objetivo, 'Rutas: ' + t.archivos.join(', '),

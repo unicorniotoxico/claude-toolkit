@@ -26,7 +26,7 @@ Por defecto, usa un revisor. Dos especialistas pueden trabajar en paralelo si ti
 
 ## 3. Seleccionar controles y herramientas
 
-Confirma el stack con los manifiestos y el código cercanos al cambio (`composer.json`, `package.json`, `pyproject.toml` o equivalentes). Consulta versiones cuando afecten el análisis. No presupongas un framework ni recorras todo el equipo.
+Confirma el stack con el código, los manifiestos y la configuración de CI cercanos al cambio. Usa los comandos del proyecto, por ejemplo los de un módulo Go (`go.mod`) o un proyecto Visual Basic .NET (`.vbproj`). Consulta versiones cuando afecten el análisis. No presupongas un framework ni recorras todo el equipo.
 
 | Stack que interviene en el cambio | Guía a consultar |
 | --- | --- |
@@ -34,7 +34,7 @@ Confirma el stack con los manifiestos y el código cercanos al cambio (`composer
 | JavaScript o TypeScript, navegador o servidor | `{{CLAUDE_DIR}}/security/stacks/javascript-typescript.md` |
 | Python | `{{CLAUDE_DIR}}/security/stacks/python.md` |
 
-Lee solo las guías pertinentes y selecciona controles por comportamiento afectado. En proyectos mixtos, sigue las conexiones entre capas que puedan invalidar el control; otro lenguaje no exige otro agente. Si el principal ya seleccionó controles, entrega esos criterios al revisor para evitar lecturas repetidas. Las guías no cubren todo stack: para otro lenguaje, framework o infraestructura deriva los controles de los requisitos, código y documentación oficial pertinentes.
+Lee solo las guías pertinentes y selecciona controles por comportamiento afectado. En proyectos mixtos, sigue las conexiones entre capas que puedan invalidar el control; otro lenguaje no exige otro agente. Si el principal ya seleccionó controles, entrega esos criterios al revisor para evitar lecturas repetidas. Las guías son opcionales. Si el stack carece de guía, deriva los controles de los requisitos, código y documentación pertinente. Si falta un entorno de ejecución compatible, conserva la revisión estática y deja la prueba de runtime pendiente.
 
 Para cada control elegido registra ubicación, criterio de aceptación y evidencia. Añade roles, permisos de negocio, separación entre clientes y operaciones sensibles reales del proyecto; no inventes esas reglas. Distingue verificado, no aplicable, pendiente y hallazgo.
 

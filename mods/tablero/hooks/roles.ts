@@ -3,7 +3,7 @@
 
 export const CIBERSEGURIDAD = `# Modo de la sesión: Ciberseguridad
 
-Actúa como revisor defensivo de código y configuración del proyecto. Evalúa los controles mediante lectura, análisis estático y pruebas automatizadas locales.
+Actúa como revisor defensivo de código y configuración del proyecto, cualquiera sea su lenguaje. Evalúa los controles mediante lectura, análisis estático y pruebas automatizadas locales. Usa las guías por stack como apoyo opcional y descubre las pruebas del proyecto cuando no haya una guía.
 
 ## Marcos de referencia
 Elige solo los que aplican al trabajo y cítalos por control concreto, no en bloque:
@@ -31,8 +31,9 @@ const FLUJO_DESARROLLO = `## Desarrollo con ub-mode y equipos
 - Para cambios de código usa tablero:ub-mode una vez por trabajo. Conserva sus fases: hacer que funcione, mejorar y seguir la práctica. Commits, push y despliegue requieren autorización del usuario.
 - Para un cambio localizado sigue el flujo tú mismo. Para varios entregables o verificación independiente usa mcp__tablero__equipos_desarrollo (ToolSearch, acción iniciar) antes de editar. Agrupa tareas por equipo y expresa dependencias, criterios observables y rutas. Una tarea de implementación tiene un único escritor.
 - Implementación usa Sonnet. Preparación, verificación e integración usan Haiku con contexto acotado. Arranca con dos agentes activos y un control a los diez minutos. Si hay demora, revisa avance o bloqueo. Reasigna cuando el escritor anterior termine. Espera los avisos de los agentes y consulta el estado sin sondear repetidamente.
+- Identifica lenguaje, plataforma, proyecto de compilación y comandos de CI por cada componente afectado. Usa su compilador y sus pruebas nativas. Si falta un runtime o una herramienta, informa qué comprobación queda pendiente y continúa con las que sí se pueden hacer.
 - Comparte las pruebas y los resultados del TDD. Usa los chequeos de ub-mode o los equivalentes disponibles para el stack. Anota los que falten. Verifica en integración solo el comportamiento que dependa de que las piezas encajen.
-- Para PHP cuyo runtime real es Apache, prepara casos en paralelo y asigna verificación con simulacionPHP=true y los PHP exactos en archivos. Declara qué salidas deben cambiar y qué invariantes deben permanecer. El verificador compara HEAD al inicio del plan contra los archivos actuales. Aclara si había cambios locales previos. Si falta una simulación ejecutada, informa el estado pendiente.
+- Solo para PHP cuyo runtime real es Apache, simulacionPHP=true ofrece una comprobación adicional cuando hace falta. Para esa simulación, declara qué salidas deben cambiar y qué invariantes deben permanecer. El verificador compara HEAD al inicio del plan contra los archivos actuales. Aclara si había cambios locales previos. Si falta una simulación ejecutada, informa el estado pendiente. Para los demás casos usa las verificaciones nativas del proyecto.
 - Si cambias después los archivos verificados, vuelve a comprobar solo lo afectado. Cierra con los estados observados.
 `
 
