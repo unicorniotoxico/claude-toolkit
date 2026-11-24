@@ -145,3 +145,20 @@ test('restaura el plan guardado y distingue ausencia de evidencia de una interru
   expect(lanzadas).toEqual(['cortada'])
   expect(nuevo.resumen().map(t => t.estado)).toEqual(['correcto', 'en curso', 'pendiente'])
 })
+
+test('el diseño precede la interfaz y la revisión UX espera la implementación', async () => {
+  const { plan, lanzadas } = correr([
+    tarea('diseno', { tipo: 'diseno_ux' }),
+    tarea('ui', { depende: ['diseno'] }),
+    tarea('revision', { tipo: 'revision_ux', depende: ['ui'] }),
+    tarea('api'),
+  ])
+  await plan.avanzar()
+  expect(lanzadas).toEqual(['diseno', 'api'])
+  plan.terminar('diseno', 'RESULTADO: OK\nAcción principal visible.', 'answer')
+  await plan.avanzar()
+  expect(lanzadas).toEqual(['diseno', 'api', 'ui'])
+  plan.terminar('ui', 'RESULTADO: OK', 'answer')
+  await plan.avanzar()
+  expect(lanzadas.at(-1)).toBe('revision')
+})

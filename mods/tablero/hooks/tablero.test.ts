@@ -247,12 +247,12 @@ test('el modo Desarrollo solicita agentes nativos y muestra las tareas rechazada
     accion: 'iniciar',
     tareas: [
       { id: 'catalogo', equipo: 'Catálogo', tipo: 'implementacion', objetivo: 'Listar dinosaurios', archivos: ['listado.php'] },
-      { id: 'ficha', equipo: 'Ficha', tipo: 'preparacion', objetivo: 'Definir casos de la ficha' },
+      { id: 'ficha', equipo: 'Ficha', tipo: 'diseno_ux', objetivo: 'Definir el diseño de la ficha' },
       { id: 'integrar', equipo: 'Integración', tipo: 'integracion', objetivo: 'Abrir el detalle de un resultado', depende: ['ficha', 'catalogo'] },
     ],
   })
   expect(result.deny).toBeUndefined()
-  expect(lanzamientos).toEqual(['tablero:desarrollo-dev', 'tablero:desarrollo-verificador'])
+  expect(lanzamientos).toEqual(['tablero:desarrollo-dev', 'tablero:desarrollo-ux'])
   expect(JSON.stringify(result.result)).toContain('bloqueado')
   await pane.press({ key: 'tab:agentes' })
   expect((await pane.find({ type: 'Text', text: /Catálogo · catalogo/ }))?.text).toContain('pendiente')

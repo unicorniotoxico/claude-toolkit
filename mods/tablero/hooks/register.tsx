@@ -699,7 +699,7 @@ async function configurarAvisos($: EngineInterface, activo: boolean) {
 
 async function iniciarDesarrollo($: EngineInterface) {
   await $.command.register({ name: 'equipos', immediate: true, description: 'Muestra los equipos y comprobaciones de Desarrollo' })
-  await $.tool.register({ name: 'equipos_desarrollo', description: 'Planifica y sigue equipos de Desarrollo. iniciar define tareas con dependencias; estado devuelve evidencia; reintentar reasigna un fallo concluido o una implementación que requiere corrección y vuelve a comprobar sus dependencias.',
+  await $.tool.register({ name: 'equipos_desarrollo', description: 'Planifica y sigue equipos de Desarrollo. iniciar define tareas con dependencias, incluido diseño y revisión UX/UI; estado devuelve evidencia; reintentar reasigna un fallo concluido o una implementación que requiere corrección y vuelve a comprobar sus dependencias.',
     inputSchema: {
       type: 'object', required: ['accion'], properties: {
         accion: { enum: ['iniciar', 'estado', 'reintentar'] },
@@ -754,6 +754,11 @@ async function iniciarDesarrollo($: EngineInterface) {
     tools: [...lectura, ...terminales],
     prompt: 'Eres un verificador independiente. Usa análisis estático o comandos de prueba offline acotados. No modifiques el producto. Informa solo evidencia observada.',
   })
+  await $.agent.register({ ...comunes, name: 'desarrollo-ux', model: 'sonnet', maxTurns: 7,
+    description: 'Diseña y revisa flujos de usuario, accesibilidad y presentación visual.',
+    tools: [...lectura, ...terminales],
+    prompt: 'Eres especialista en UX/UI para web, escritorio o terminal. Aplica el diseño existente y el contexto de quien usa el producto. Revisa jerarquía, navegación, legibilidad, teclado y foco, tamaños de pantalla y estados vacíos, de carga y error. Prioriza los problemas que frenan al usuario. En diseño entrega criterios verificables. En revisión observa la interfaz en ejecución con las herramientas locales disponibles y distingue lo renderizado de la lectura estática. Indica pantalla y pasos concretos. Trabaja sin modificar el producto ni instalar herramientas.',
+  })
   await $.agent.register({ ...comunes, name: 'desarrollo-php', model: 'haiku',
     description: 'Traza PHP y verifica el comportamiento mediante php_replay.',
     tools: [...lectura, PHP],
@@ -788,7 +793,8 @@ function guardarPlan($: EngineInterface) {
 function motorEquipo($: EngineInterface, root: string, base: string): ConstructorParameters<typeof Equipos>[0] {
   return {
     lanzar: (t, evidencia) => {
-      const tipo = t.tipo === 'implementacion' ? 'desarrollo-dev' : t.simulacionPHP ? 'desarrollo-php' : 'desarrollo-verificador'
+      const tipo = t.tipo === 'diseno_ux' || t.tipo === 'revision_ux' ? 'desarrollo-ux' :
+        t.tipo === 'implementacion' ? 'desarrollo-dev' : t.simulacionPHP ? 'desarrollo-php' : 'desarrollo-verificador'
       const instrucciones = t.tipo === 'implementacion'
         ? '\nGuía ub-mode: ' + $.plugin.root + '/skills/ub-mode/SKILL.md. Lee las fases pertinentes. Conserva la entrega local.'
         : ''
@@ -870,15 +876,11 @@ export const register: Register = on => {
       await cambiarVistaDispositivo($, kind === 'pair' ? 'usar' : 'enviar')
       await update($, envioDispositivo, () => [host, port, peer, project, kind, JSON.stringify(data)])
     } else if (args[0] === 'permitir') {
-      if (args.length !== 6) return { text: 'Uso: /dispositivos permitir HUELLA PROYECTO BLOQUE read|work MINUTOS' }
-      await operarDispositivo($, 'grant', args.slice(1))
+      await cambiarVistaDispositivo($, 'permisos')
     } else if (args[0] === 'rechazar' || args[0] === 'revocar') {
       await operarDispositivo($, args[0] === 'rechazar' ? 'reject' : 'revoke', args.slice(1))
     } else if (args[0] === 'invitar') {
-      try {
-        const invitation = await gateway($, 'invite')
-        return { text: 'Invitación válida por cinco minutos: ' + invitation.code }
-      } catch { return { text: 'Activá el enlace local y volvé a intentar.' } }
+      await comenzarVinculacion($)
     } else if (args[0] === 'huella') {
       try { return { text: String((await gateway($, 'identity')).fingerprint) } }
       catch { return { text: 'Configurá primero el certificado de este dispositivo.' } }
@@ -889,7 +891,7 @@ export const register: Register = on => {
     await update($, tab, () => 'dispositivos')
     void $.ui.open({ id: PANE, title: TITLE }).catch(() => {})
     await refrescarSeguridad($)
-    return { text: 'Dispositivos. Usá enviar, permitir, rechazar, revocar, invitar, huella o buscar.' }
+    return { text: 'Dispositivos. Las invitaciones y aprobaciones se confirman desde el panel.' }
   })
 
   on('tool.run', { tool: HERRAMIENTAS }, async ($, e) => {
@@ -1006,6 +1008,7 @@ export const register: Register = on => {
 
   on('agent.offer', { agent: 'tablero:desarrollo-dev' }, () => ({ isOffered: false }))
   on('agent.offer', { agent: 'tablero:desarrollo-verificador' }, () => ({ isOffered: false }))
+  on('agent.offer', { agent: 'tablero:desarrollo-ux' }, () => ({ isOffered: false }))
   on('agent.offer', { agent: 'tablero:desarrollo-php' }, () => ({ isOffered: false }))
 
   on('session.start', async ($, e, next) => {
@@ -1109,7 +1112,9 @@ export const register: Register = on => {
     try {
       const m = await read($, mode)
       if (!isRole(m)) return ran
-      return { sections: [...ran.sections, { id: 'tablero:modo', text: ROLES[m], scope: 'session' as const }] }
+      const ux = m === 'ciberseguridad' ? '' :
+        '\nPara una interfaz nueva o un cambio importante de flujo, planifica diseno_ux antes de su implementación y revision_ux después. Si el cambio visual es pequeño, usa solo una revisión acotada. El agente UX usa Sonnet y recibe las pantallas y criterios afectados. Reutiliza el sistema de diseño y la evidencia de ejecución. Si no hay impacto en la interfaz, omite estas tareas.'
+      return { sections: [...ran.sections, { id: 'tablero:modo', text: ROLES[m] + ux, scope: 'session' as const }] }
     } catch {
       return ran
     }
@@ -1994,6 +1999,7 @@ export const register: Register = on => {
             <Text bold color={th.accent}>Equipos de desarrollo</Text>
             {filasEquipos.map(f => (
               <Text key={f.id} color={f.demorada || f.estado === 'pendiente' || f.estado === 'pausada' ? th.warn : undefined}>
+                {f.tipo === 'diseno_ux' ? 'Diseño UX/UI · ' : f.tipo === 'revision_ux' ? 'Revisión UX/UI · ' : ''}
                 {f.equipo} · {f.id} · {f.estado}{f.demorada ? ' · demorada' : ''}
                 {f.verificacion ? ' · PHP ' + f.verificacion : ''}
               </Text>

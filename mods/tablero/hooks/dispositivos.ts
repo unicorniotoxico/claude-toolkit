@@ -29,9 +29,11 @@ export function validarDestino(form: FormularioDispositivo) {
   const host = form.host.trim()
   const puerto = Number(form.puerto)
   const huella = form.huella.replace(/[ :]/g, '').toLowerCase()
-  if (!/^(?:[a-z0-9][a-z0-9.-]{0,252}|\[[0-9a-f:]+\])$/i.test(host) ||
+  if (!/^(?:10|127|172\.(?:1[6-9]|2[0-9]|3[01])|192\.168)\./.test(host) ||
+      !/^(?:\d{1,3}\.){3}\d{1,3}$/.test(host) ||
+      host.split('.').some(part => Number(part) > 255 || String(Number(part)) !== part) ||
       !/^\d+$/.test(form.puerto) || !Number.isInteger(puerto) || puerto < 1 || puerto > 65535)
-    throw new Error('Ingresá la dirección y el puerto de la otra PC.')
+    throw new Error('Ingresá la dirección IPv4 privada y el puerto de la otra PC.')
   if (!/^[a-f0-9]{64}$/.test(huella) || !form.coincide)
     throw new Error('Compará la huella completa y confirmá que coincide.')
   return [host, String(puerto), huella] as const

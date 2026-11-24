@@ -1,13 +1,14 @@
 import json
 from pathlib import Path
-import shutil
-import subprocess
 import tempfile
 import threading
 import time
 import unittest
 
 import device_gateway as gateway
+from device_certificates import create_identity, import_certificate, issue, openssl_binary
+
+OPENSSL = openssl_binary()
 
 
 class DevicePolicyTest(unittest.TestCase):
@@ -35,31 +36,46 @@ class DevicePolicyTest(unittest.TestCase):
                 self.assertEqual(gateway.receive(db, "c"*64, recipient, dict(msg, id="2"*32)), 403)
             with gateway.transaction(folder) as db:
                 self.assertEqual(gateway.receive(db, peer, recipient, dict(msg, until=now-1)), 400)
-            self.assertEqual(len(gateway.local(folder, "audit", ["replay"])), 1)
+            with gateway.transaction(folder) as db:
+                db.execute("DELETE FROM seen WHERE id=?", (msg["id"],))
+            with gateway.transaction(folder) as db:
+                self.assertEqual(gateway.receive(db, peer, recipient, msg), 409)
+            with gateway.transaction(folder) as db:
+                self.assertEqual(gateway.receive(db, peer, recipient, dict(msg, project="otro", id="3"*32)), 403)
+            self.assertEqual(len(gateway.local(folder, "audit", ["replay"])), 2)
             with self.assertRaises(ValueError):
                 gateway.local(folder, "grant", [peer, "demo", "work_request", "read", "2"])
             gateway.local(folder, "link", ["off"])
             self.assertEqual(gateway.local(folder, "snapshot", [])["grants"], [])
             self.assertEqual(len(gateway.local(folder, "snapshot", [])["inbox"]), 1)
 
-    @unittest.skipUnless(shutil.which("openssl"), "openssl required for ephemeral test certificates")
+    def test_peer_addresses_stay_on_private_ipv4(self):
+        self.assertEqual(str(gateway.private_address("192.168.1.4")), "192.168.1.4")
+        self.assertEqual(str(gateway.allowed_networks(["10.0.1.0/24"])[0]), "10.0.1.0/24")
+        for address in ("0.0.0.0", "1.1.1.1", "localhost", "::1"):
+            with self.assertRaises(ValueError):
+                gateway.private_address(address)
+        for network in ("0.0.0.0/0", "192.168.1.0/8", "1.1.1.1", "::/0"):
+            with self.assertRaises(ValueError):
+                gateway.allowed_networks([network])
+
+    @unittest.skipUnless(OPENSSL, "openssl required for ephemeral test certificates")
     def test_mtls_pair_requires_local_grant_and_matching_server(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
-            def run(*args):
-                subprocess.run(["openssl", *args], cwd=folder, check=True, capture_output=True)
-            run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=Test CA",
-                "-days", "1", "-keyout", "ca.key", "-out", "ca.pem")
-            for name in ("sender", "receiver"):
-                run("req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN="+name,
-                    "-keyout", name+".key", "-out", name+".csr")
-                run("x509", "-req", "-in", name+".csr", "-CA", "ca.pem", "-CAkey", "ca.key",
-                    "-CAcreateserial", "-days", "1", "-out", name+".pem")
-            def cfg(name):
-                return dict(ca=str(folder/"ca.pem"), cert=str(folder/(name+".pem")),
-                            key=str(folder/(name+".key")), bind="127.0.0.1", port=0,
-                            allow=["127.0.0.1"])
-            receiver, sender = cfg("receiver"), cfg("sender")
+            receptor, emisor = folder / "receptor", folder / "emisor"
+            receptor.mkdir()
+            emisor.mkdir()
+            identidad = create_identity(receptor, True)
+            solicitud = create_identity(emisor, False)
+            firmado = issue(receptor, solicitud["archivo"], solicitud["huella"])
+            local = import_certificate(emisor, firmado["archivo"], firmado["huellaAutoridad"])
+
+            def cfg(identity):
+                return dict(ca=identity["ca"], cert=identity["cert"], key=identity["key"],
+                            bind="127.0.0.1", port=0, allow=["127.0.0.1"])
+
+            receiver, sender = cfg(identidad), cfg(local)
             gateway.local(folder, "link", ["on"])
             invitation = gateway.local(folder, "invite", [])["code"]
             with gateway.Gateway(receiver, folder) as server:

@@ -31,6 +31,26 @@ FP = re.compile(r"[0-9a-f]{64}")
 
 
 
+PRIVATE_V4 = tuple(ipaddress.IPv4Network(net) for net in
+                   ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"))
+
+
+def private_address(value):
+    address = ipaddress.IPv4Address(value)
+    if not any(address in network for network in PRIVATE_V4):
+        raise ValueError("Usá una dirección IPv4 privada o de loopback.")
+    return address
+
+
+def allowed_networks(values):
+    if not isinstance(values, list) or not 1 <= len(values) <= 20:
+        raise ValueError("Agregá entre una y veinte direcciones permitidas.")
+    networks = tuple(ipaddress.IPv4Network(value, strict=False) for value in values)
+    if any(not any(network.subnet_of(private) for private in PRIVATE_V4) for network in networks):
+        raise ValueError("Los orígenes permitidos deben estar dentro de una red IPv4 privada o de loopback.")
+    return networks
+
+
 def fingerprint(cert):
     return hashlib.sha256(cert).hexdigest()
 
@@ -135,11 +155,12 @@ def receive(db, peer, recipient, msg):
         event(db, "permission_denied", peer, project)
         return 403
     added = db.execute("INSERT OR IGNORE INTO seen VALUES(?,?)", (msg["id"], msg["until"]))
+    if added.rowcount:
+        added = db.execute("INSERT OR IGNORE INTO inbox VALUES(?,?,?,?,?,?)",
+                           (msg["id"], peer, project, kind, now, json.dumps(msg["data"])))
     if not added.rowcount:
         event(db, "replay", peer, project)
         return 409
-    db.execute("INSERT INTO inbox VALUES(?,?,?,?,?,?)",
-               (msg["id"], peer, project, kind, now, json.dumps(msg["data"])))
     event(db, "message_received", peer, project, "queued")
     return 202
 
@@ -153,14 +174,10 @@ class Gateway(HTTPServer):
         self.ctx.load_verify_locations(cfg["ca"])
         self.ctx.verify_mode = ssl.CERT_REQUIRED
         self.identity = fingerprint(certificate(cfg["cert"]))
-        self.allowed = tuple(ipaddress.ip_network(a, strict=False) for a in cfg["allow"])
-        if not self.allowed:
-            raise ValueError("Configure al menos un origen permitido.")
+        self.allowed = allowed_networks(cfg["allow"])
         self.rates = {}
         self.total = (0, 0)
-        bind = ipaddress.IPv4Address(cfg["bind"])
-        if not any(bind in ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")):
-            raise ValueError("Usá una IPv4 privada concreta para la prueba.")
+        bind = private_address(cfg["bind"])
         if not (1024 <= cfg["port"] <= 65535 or (bind.is_loopback and cfg["port"] == 0)):
             raise ValueError("Puerto fuera de rango.")
         super().__init__((str(bind), cfg["port"]), Handler)
@@ -253,18 +270,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def connection_settings(config):
-    address = ipaddress.IPv4Address(config["bind"])
+    address = private_address(config["bind"])
     port = config["port"]
-    if not any(address in ipaddress.ip_network(net)
-               for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")):
-        raise ValueError("Indicá una dirección IPv4 privada de esta PC.")
     if type(port) is not int or not 1024 <= port <= 65535:
         raise ValueError("Elegí un puerto de 1024 a 65535.")
-    allowed = config["allow"]
-    if not isinstance(allowed, list) or not allowed or len(allowed) > 20:
-        raise ValueError("Agregá entre una y veinte direcciones permitidas.")
-    for network in allowed:
-        ipaddress.ip_network(network, strict=False)
+    allowed_networks(config["allow"])
     return str(address), port
 
 
@@ -436,6 +446,7 @@ def local(folder, action, args):
 
 def send(cfg, args):
     host, port, expected, project, kind, payload = args
+    host = str(private_address(host))
     if not FP.fullmatch(expected):
         raise ValueError("Verificá la huella del receptor por otro canal.")
     data = decode(payload)

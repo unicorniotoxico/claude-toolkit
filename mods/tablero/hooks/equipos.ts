@@ -1,4 +1,4 @@
-export const TIPOS = ['preparacion', 'implementacion', 'verificacion', 'integracion'] as const
+export const TIPOS = ['preparacion', 'implementacion', 'verificacion', 'integracion', 'diseno_ux', 'revision_ux'] as const
 type Tipo = typeof TIPOS[number]
 type Estado = 'en cola' | 'en curso' | 'correcto' | 'falló' | 'pendiente' | 'bloqueado' | 'pausada'
 
@@ -269,6 +269,8 @@ export function promptTarea(t: Tarea, evidencia: string) {
     verificacion: t.simulacionPHP
       ? 'Traza el PHP y los efectos. Diseña casos propios desde el contrato y usa php_replay. El driver debe ejecutar el código real de /app y simular dependencias. Incluye casos que deban cambiar y que deban conservarse. Si falta una dependencia fiel, informa el límite.'
       : 'Comprueba de forma independiente el criterio encargado. Reutiliza la evidencia de dependencias y ejecuta otra comprobación solo si cubre un escenario faltante o un estado distinto.',
+    diseno_ux: 'Define el recorrido, la jerarquía visual y los estados antes de implementar. Devuelve criterios concretos para quien implementa.',
+    revision_ux: 'Recorre la interfaz implementada y compara las acciones principales con el diseño y los criterios. Si no hay vista ejecutable, identifica lo observado por lectura y declara pendiente la validación visual.',
     integracion: 'Comprueba únicamente cómo encajan las piezas y el recorrido integrado. Reutiliza la evidencia de las pruebas de cada equipo.',
   }[t.tipo]
   return [

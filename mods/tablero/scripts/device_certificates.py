@@ -50,6 +50,22 @@ def private_file(path, content):
         file.write(content)
 
 
+def restrict_identity(folder):
+    if os.name != "nt":
+        return
+    system = Path(os.environ["SystemRoot"]) / "System32"
+    opts = dict(stdin=subprocess.DEVNULL, capture_output=True, timeout=8)
+    account = subprocess.run([str(system / "whoami.exe"), "/user", "/fo", "csv", "/nh"], **opts)
+    sid = re.search(rb"S-1-(?:[0-9]+-)*[0-9]+", account.stdout)
+    if account.returncode or not sid:
+        raise ValueError("No se pudo verificar el usuario de Windows. No se generaron claves.")
+    owner = "*" + sid.group().decode("ascii") + ":(OI)(CI)F"
+    acl = subprocess.run([str(system / "icacls.exe"), str(folder), "/grant:r", owner, "*S-1-5-18:(OI)(CI)F",
+                          "/inheritance:r"], **opts)
+    if acl.returncode:
+        raise ValueError("No se pudo proteger la carpeta de identidad. No se generaron claves.")
+
+
 def new_key(folder, name):
     private_file(folder / name, b"")
     openssl(folder, "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-out", name)
@@ -90,6 +106,7 @@ def create_identity(folder, as_authority):
     with TemporaryDirectory(prefix="identidad-", dir=folder) as temp:
         work = Path(temp) / IDENTITY
         work.mkdir(mode=0o700)
+        restrict_identity(work)
         new_key(work, "device.key")
         openssl(work, "req", "-new", "-key", "device.key", "-subj", "/CN=Claude Toolkit Device", "-out", "solicitud.csr")
         if as_authority:
