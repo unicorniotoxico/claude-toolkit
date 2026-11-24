@@ -1,7 +1,7 @@
 # claude-toolkit
 
 Memoria local, subagentes de evidencia y seguridad, y un panel de gasto para Claude Code en Windows, macOS y Linux.
-Todo corre en tu máquina: no hay servicios, contenedores ni llamadas extra al modelo, y no trae datos de nadie.
+La memoria y el tablero corren localmente sin llamadas propias al modelo. Los modos pueden delegar trabajo a los subagentes de Claude Code.
 
 ## Qué incluye
 
@@ -29,6 +29,18 @@ Al iniciar una sesión, una barra sobre el prompt pregunta para qué es:
 - Todos los roles obligan a verificar en fuentes oficiales (NVD, GitHub Advisories, OSV, OWASP, documentación del proveedor) lo que pudo cambiar después de la fecha de corte del modelo.
 - "recordar en esta carpeta" guarda el modo por proyecto; `/modo` o "cambiar" en el panel lo cambia.
 - Los textos de los roles están en `mods/tablero/hooks/roles.ts`.
+
+### Equipos de Desarrollo
+
+Para trabajos con piezas independientes, el orquestador arma un plan con tareas de preparación, implementación, verificación e integración. El mod lanza las que tengan dependencias resueltas. El plan admite hasta tres agentes a la vez (dos por defecto) y un punto de control de uno a treinta minutos (diez por defecto). Las demoras aparecen en `/equipos` y el tablero. El orquestador puede reasignar tareas que hayan terminado con fallo o pendientes. La cola evita escritores simultáneos sobre rutas declaradas que se solapen.
+
+Sonnet implementa y Haiku se encarga de comprobaciones acotadas. Usan el mismo ciclo de [ub-mode](https://github.com/unclebob/ub-mode), incluido con su licencia MIT (revisión `3da62bf`). Los chequeos externos requieren las herramientas correspondientes en el proyecto. Los casos y resultados se reutilizan en las etapas siguientes.
+
+#### Verificación PHP fuera de Apache
+
+Haiku traza el código y prepara un driver independiente. `php_replay` ejecuta ese driver sobre archivos PHP seleccionados de HEAD al iniciar el plan y del árbol de trabajo posterior. Compara stdout con lo esperado y comprueba si debía mantenerse o cambiar. Usá salida estructurada para incluir efectos simulados como consultas o correos. El informe identifica los hashes de las fuentes, la imagen y los casos. El driver y las copias se eliminan al terminar.
+
+Se requiere Docker con contenedores Linux y una imagen PHP local compatible. La predeterminada es `php:8.3-cli`, configurable mediante `CLAUDE_TOOLKIT_PHP_IMAGE`. Se montan los PHP declarados y el driver en modo lectura, con la red desactivada. Las dependencias y los efectos de Apache que el driver no simula quedan fuera del resultado.
 
 ## Requisitos
 

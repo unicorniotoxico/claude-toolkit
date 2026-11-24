@@ -1,0 +1,86 @@
+import { expect, test } from 'claude-code/testing'
+import { Equipos, planValidado, type Tarea } from './equipos'
+
+const tarea = (id: string, otros: Partial<Tarea> = {}): Tarea => ({
+  id, equipo: id, tipo: 'implementacion', objetivo: 'Criterio verificable',
+  archivos: [id + '.php'], depende: [], simulacionPHP: false, ...otros,
+})
+
+function correr(tareas: Tarea[]) {
+  const lanzadas: string[] = []
+  const avisos: Array<() => void> = []
+  const plan = new Equipos({
+    lanzar: async t => {
+      lanzadas.push(t.id)
+      return { agentId: t.id }
+    },
+    actualizar: () => {},
+    aviso: () => {},
+    reloj: (_ms, cb) => {
+      avisos.push(cb)
+      return () => {}
+    },
+  }, planValidado(tareas), 2, 60_000, 'base')
+  return { plan, lanzadas, avisos }
+}
+
+test('corre equipos independientes y espera dependencias y archivos compartidos', async () => {
+  const { plan, lanzadas, avisos } = correr([
+    tarea('datos', { archivos: ['src'] }),
+    tarea('busqueda', { archivos: ['src/consulta.php'] }),
+    tarea('ficha'),
+    tarea('integracion', { tipo: 'integracion', depende: ['busqueda', 'ficha'] }),
+  ])
+  await plan.avanzar()
+  expect(lanzadas).toEqual(['datos', 'ficha'])
+  avisos[0]!()
+  expect(plan.resumen()[0]?.demorada).toBe(true)
+  plan.terminar('datos', 'RESULTADO: OK', 'answer')
+  await plan.avanzar()
+  expect(lanzadas).toEqual(['datos', 'ficha', 'busqueda'])
+  plan.terminar('busqueda', 'RESULTADO: FALLO', 'answer')
+  await plan.avanzar()
+  expect(plan.resumen()[3]?.estado).toBe('bloqueado')
+  await plan.reintentar('busqueda', 'Corregir el caso que falló')
+  plan.terminar('ficha', 'RESULTADO: OK', 'answer')
+  plan.terminar('busqueda', 'RESULTADO: OK', 'answer')
+  await plan.avanzar()
+  expect(lanzadas.at(-1)).toBe('integracion')
+})
+
+test('una aprobación declarada sin simulación PHP sigue pendiente', async () => {
+  const { plan } = correr([tarea('replay', { tipo: 'verificacion', simulacionPHP: true })])
+  await plan.avanzar()
+  plan.terminar('replay', 'RESULTADO: OK', 'answer')
+  expect(plan.resumen()[0]?.estado).toBe('pendiente')
+  await plan.reintentar('replay', 'Ejecutar simulación')
+  plan.buscar('replay')!.simulacion = { estado: 'diferencias' }
+  plan.terminar('replay', 'RESULTADO: OK', 'answer')
+  expect(plan.resumen()[0]?.estado).toBe('falló')
+})
+
+test('rechaza dependencias circulares en lugar de dejar equipos esperando', () => {
+  let mensaje = ''
+  try {
+    planValidado([tarea('uno', { depende: ['dos'] }), tarea('dos', { depende: ['uno'] })])
+  } catch (error) {
+    mensaje = String(error)
+  }
+  expect(mensaje).toContain('circular')
+})
+
+
+test('una corrección invalida solo las etapas dependientes ya terminadas', async () => {
+  const { plan, lanzadas } = correr([
+    tarea('dev'), tarea('ficha'),
+    tarea('verificar', { tipo: 'verificacion', depende: ['dev'] }),
+  ])
+  await plan.avanzar()
+  plan.terminar('dev', 'RESULTADO: OK', 'answer')
+  plan.terminar('ficha', 'RESULTADO: OK', 'answer')
+  await plan.avanzar()
+  plan.terminar('verificar', 'RESULTADO: FALLO', 'answer')
+  await plan.reintentar('dev', 'Arreglar el caso observado')
+  expect(plan.resumen().map(t => t.estado)).toEqual(['en curso', 'correcto', 'en cola'])
+  expect(lanzadas).toEqual(['dev', 'ficha', 'verificar', 'dev'])
+})

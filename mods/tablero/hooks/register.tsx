@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRun, Limit, Look, McpServer, MemStats, Mode, SessionSummary, ToolStat, Usage } from '../types'
 import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
+import { Equipos, planValidado, promptTarea, TIPOS } from './equipos'
 
 // Qué se actualiza cómo:
 //  - por eventos: agentes (agent.spawn / classic.SubagentStop / turn.complete del subagente), herramientas y
@@ -10,6 +11,11 @@ import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
 //  - por consulta: el consumo cada 2 s (esta sesión y las demás sesiones locales, que publican un archivo
 //    cada una), el reloj de las duraciones cada 1 s mientras haya agentes activos, y una conciliación de
 //    agentes y servidores MCP cada 30 s por si algo se cortó sin evento.
+
+const PLAN = 'mcp__tablero__equipos_desarrollo'
+const PHP = 'mcp__tablero__php_replay'
+const lista = { type: 'array', items: { type: 'string' } }
+const texto = { type: 'string' }
 
 const PANE = 'tablero'
 const TITLE = 'Tablero'
@@ -28,6 +34,7 @@ const remember = atom({ plugin: 'tablero', key: 'remember' } as const, true)
 const DEFAULT_LOOK: Look = { tema: 'claude', fondo: 'transparente', bordes: false, compacto: false }
 const look = atom({ plugin: 'tablero', key: 'look' } as const, DEFAULT_LOOK)
 const mcpOff = atom({ plugin: 'tablero', key: 'mcpOff' } as const, [])
+const equipos = atom({ plugin: 'tablero', key: 'equipos' } as const, [])
 const showIdle = atom({ plugin: 'tablero', key: 'showIdle' } as const, false)
 
 // Temas: colores de títulos, barras y estados. 'claude' sigue el tema de Claude Code (claro u oscuro).
@@ -379,8 +386,179 @@ async function setLook($: EngineInterface, change: (l: Look) => Look) {
 
 // ---------------------------------------------------------------- hooks
 
+async function iniciarDesarrollo($: EngineInterface) {
+  await $.command.register({ name: 'equipos', immediate: true, description: 'Muestra los equipos y comprobaciones de Desarrollo' })
+  await $.tool.register({ name: 'equipos_desarrollo', description: 'Planifica y sigue equipos de Desarrollo. iniciar define tareas con dependencias; estado devuelve evidencia; reintentar reasigna un fallo concluido o una implementación que requiere corrección y vuelve a comprobar sus dependencias.',
+    inputSchema: {
+      type: 'object', required: ['accion'], properties: {
+        accion: { enum: ['iniciar', 'estado', 'reintentar'] },
+        tareas: { type: 'array', items: {
+          type: 'object', required: ['id', 'equipo', 'tipo', 'objetivo'], properties: {
+            id: texto, equipo: texto, tipo: { enum: [...TIPOS] }, objetivo: texto,
+            depende: lista, archivos: lista, simulacionPHP: { type: 'boolean' },
+          },
+        } },
+        concurrencia: { type: 'integer', minimum: 1, maximum: 3 },
+        minutos: { type: 'integer', minimum: 1, maximum: 30 },
+        id: texto, ajuste: texto,
+      },
+    },
+  })
+  await $.tool.register({ name: 'php_replay', description: 'Solo para el verificador PHP asignado. Ejecuta el mismo driver contra el commit base y el PHP actual en Docker sin red. El driver PHP lee stdin, usa /app para los fuentes y escribe el resultado observado. Comparación literal de stdout.',
+    inputSchema: {
+      type: 'object', required: ['archivos', 'driver', 'casos'], properties: {
+        archivos: lista, driver: texto,
+        casos: { type: 'array', items: {
+          type: 'object', required: ['id', 'entrada', 'esperado', 'relacion'], properties: {
+            id: texto, entrada: texto, esperado: texto, relacion: { enum: ['igual', 'distinto', 'cualquiera'] },
+          },
+        } },
+      },
+    },
+  })
+  const comunes = { omitClaudeMd: true as const, maxTurns: 10 }
+  const lectura = ['Read', 'Grep', 'Glob']
+  await $.agent.register({ ...comunes, name: 'desarrollo-dev', model: 'sonnet', maxTurns: 24,
+    description: 'Implementa una pieza del plan de Desarrollo.',
+    tools: [...lectura, 'Edit', 'Write', 'Bash'],
+    prompt: 'Implementas una sola tarea del orquestador. Respeta sus rutas y criterios. Consulta las etapas pertinentes de ub-mode y devuelve evidencia compacta.',
+  })
+  await $.agent.register({ ...comunes, name: 'desarrollo-verificador', model: 'haiku',
+    description: 'Prepara evidencia o verifica un requisito concreto.',
+    tools: [...lectura, 'Bash'],
+    prompt: 'Eres un verificador independiente. Usa análisis estático o comandos de prueba offline acotados. No modifiques el producto. Informa solo evidencia observada.',
+  })
+  await $.agent.register({ ...comunes, name: 'desarrollo-php', model: 'haiku',
+    description: 'Traza PHP y verifica el comportamiento mediante php_replay.',
+    tools: [...lectura, PHP],
+    prompt: 'Eres un verificador PHP independiente. Traza los caminos del código. Prepara un driver que ejecute los fuentes montados en /app, reemplace dependencias por datos de prueba y devuelva evidencia del comportamiento. No leas credenciales ni copies lógica del producto al driver.',
+  })
+}
 export const register: Register = on => {
+  let flujo: Equipos | undefined
+  let iniciando = false
+  let programado: { cancel(): void } | undefined
+  let cerrando = false
+  const replays = new Set<string>()
+
+  function cerrarDesarrollo() {
+    cerrando = true
+    programado?.cancel()
+    flujo?.cerrar()
+  }
+
+  on('command.run', { command: 'equipos' }, () => {
+    const filas = flujo?.resumen() ?? []
+    return { text: filas.length ? filas.map(f =>
+      f.equipo + ' · ' + f.id + ' · ' + f.estado + (f.demorada ? ' · demorada' : '') +
+      (f.verificacion ? ' · PHP ' + f.verificacion : ''),
+    ).join('\n') : 'Todavía no hay equipos en esta sesión.' }
+  })
+
+  on('tool.run', { tool: PLAN }, async ($, e) => {
+    const seleccionado = await read($, mode)
+    if (e.agentId || (seleccionado !== 'desarrollo' && seleccionado !== 'ambos')) return { deny: 'Solo el orquestador en Desarrollo o Ambos puede gestionar equipos.' }
+    const args = e as unknown as Record<string, unknown>
+    if (args.accion === 'estado') {
+      const filas = flujo?.resumen(true) ?? []
+      return { result: JSON.stringify(typeof args.id === 'string'
+        ? filas.filter(f => f.id === args.id)
+        : filas.map(({ evidencia, ...fila }) => fila)) }
+    }
+    try {
+      if (args.accion === 'reintentar' && flujo && typeof args.id === 'string' && typeof args.ajuste === 'string') {
+        await flujo.reintentar(args.id, args.ajuste)
+        return { result: JSON.stringify(flujo.resumen()) }
+      }
+      if (args.accion !== 'iniciar') return { deny: 'Acción inválida.' }
+      if (flujo?.activo || iniciando) return { deny: 'Ya hay un plan en curso.' }
+      iniciando = true
+      try {
+        const plan = planValidado(args.tareas)
+        const n = args.concurrencia ?? 2
+        const minutos = args.minutos ?? 10
+        if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 3 ||
+            typeof minutos !== 'number' || !Number.isInteger(minutos) || minutos < 1 || minutos > 30)
+          throw new Error('Concurrencia entre 1 y 3, punto de control entre 1 y 30 minutos.')
+        const root = await $.session.root()
+        const base = await $.process.run(['git', '-C', root, 'rev-parse', '--verify', 'HEAD'], { timeoutMs: 5000 })
+          .then(r => r.exitCode === 0 ? r.stdout.trim() : '', () => '')
+        flujo?.cerrar()
+        const nuevo: Equipos = new Equipos({
+          lanzar: (t, evidencia) => {
+            const tipo = t.tipo === 'implementacion' ? 'desarrollo-dev' : t.simulacionPHP ? 'desarrollo-php' : 'desarrollo-verificador'
+            const instrucciones = t.tipo === 'implementacion'
+              ? '\nGuía ub-mode: ' + $.plugin.root + '/skills/ub-mode/SKILL.md. Lee las fases pertinentes. Conserva la entrega local.'
+              : ''
+            return $.agent.spawn({
+              cwd: root,
+              subagentType: 'tablero:' + tipo,
+              description: (t.equipo + ': ' + t.id).slice(0, 100),
+              prompt: promptTarea(t, evidencia) + instrucciones + (base ? '\nCommit base: ' + base : ''),
+            })
+          },
+          actualizar: () => { void update($, equipos, () => nuevo.resumen()) },
+          aviso: t => { void $.ui.toast(t.equipo + ' · ' + t.id + ': llegó al punto de control. Revisá el avance en /equipos.') },
+          reloj: (ms, callback) => {
+            const timer = $.clock.after(ms, callback)
+            return () => timer.cancel()
+          },
+        }, plan, n, minutos * 60_000, base)
+        flujo = nuevo
+        await flujo.avanzar()
+        return { result: JSON.stringify(flujo.resumen()) }
+      } finally {
+        iniciando = false
+      }
+    } catch (error) {
+      return { deny: String(error).slice(0, 600) }
+    }
+  })
+
+  on('tool.run', { tool: PHP }, async ($, e) => {
+    const t = flujo?.buscar(e.agentId)
+    if (!flujo || !t?.simulacionPHP || !e.agentId) return { deny: 'Disponible solo para el verificador PHP de una tarea activa.' }
+    if (!flujo.base) return { deny: 'La comparación PHP necesita un commit base disponible.' }
+    const args = e as unknown as Record<string, unknown>
+    if (!Array.isArray(args.archivos) || !args.archivos.every(a => typeof a === 'string' &&
+      t.archivos.some(p => a === p || a.startsWith(p + '/'))) ||
+      !t.archivos.filter(p => p.toLowerCase().endsWith('.php')).every(p => (args.archivos as string[]).includes(p)))
+      return { deny: 'Incluí solo fuentes PHP declarados en la tarea.' }
+    if (replays.has(e.agentId)) return { deny: 'Ya hay una simulación en curso para esta tarea.' }
+    replays.add(e.agentId)
+    try {
+      const root = await $.session.root()
+      const windows = (await $.env.get('OS')) === 'Windows_NT'
+      const engine = $.plugin.root + '/../../memory-engine'
+      const python = engine + (windows ? '/.venv/Scripts/python.exe' : '/.venv/bin/python')
+      const script = $.plugin.root + '/scripts/php_replay.py'
+      const run = await $.process.run([python, '-I', script], {
+        cwd: root, timeoutMs: 145_000,
+        stdin: JSON.stringify({ base: flujo.base, archivos: args.archivos, casos: args.casos, driver: args.driver }),
+      })
+      if (run.exitCode !== 0 || run.isStdoutTruncated) throw new Error('El ejecutor PHP no devolvió un informe completo.')
+      const evidencia = run.stdout.trim()
+      const resultado = JSON.parse(evidencia) as { estado?: string; detalle?: string }
+      if (!['verificado', 'diferencias', 'pendiente'].includes(resultado.estado ?? ''))
+        throw new Error('Estado de simulación inválido.')
+      t.simulacion = { estado: resultado.estado!, evidencia, detalle: resultado.detalle }
+      const filas = flujo.resumen()
+      void update($, equipos, () => filas)
+      return { result: evidencia }
+    } catch (error) {
+      t.simulacion = { estado: 'pendiente', detalle: String(error).slice(0, 400) }
+      return { result: JSON.stringify(t.simulacion) }
+    } finally {
+      replays.delete(e.agentId)
+    }
+  })
+
+  on('agent.offer', { agent: 'tablero:desarrollo-dev' }, () => ({ isOffered: false }))
+  on('agent.offer', { agent: 'tablero:desarrollo-verificador' }, () => ({ isOffered: false }))
+  on('agent.offer', { agent: 'tablero:desarrollo-php' }, () => ({ isOffered: false }))
+
   on('session.start', async ($, e, next) => {
+    await iniciarDesarrollo($)
     await $.command.register({ name: 'tablero', description: 'Abre el tablero de gasto, agentes, herramientas y memoria' })
     await $.command.register({ name: 'modo', description: 'Elige el modo de la sesión: ciberseguridad, desarrollo o ambos' })
     const ran = await next(e)
@@ -439,6 +617,7 @@ export const register: Register = on => {
   })
 
   on('session.end', async ($, e, next) => {
+    cerrarDesarrollo()
     for (const t of timers.splice(0)) t.cancel()
     try {
       await publish($, true)
@@ -552,6 +731,12 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const ran = await next(e)
+    if (e.agentId && flujo?.terminar(e.agentId, e.answer, e.reason) && !programado && !cerrando) {
+      programado = $.clock.after(20, async () => {
+        programado = undefined
+        await flujo?.avanzar()
+      })
+    }
     try {
       if (e.agentId) {
         await finishAgent($, e.agentId, e.isAborted ? 'killed' : 'completed')
@@ -567,6 +752,10 @@ export const register: Register = on => {
     const key = server ? `mcp:${server}` : e.tool
     const t0 = await $.clock.now()
     const ran = await next(e)
+    const args = e as unknown as Record<string, unknown>
+    if (e.agentId && (e.tool === 'Bash' || e.tool === 'PowerShell') &&
+        typeof args.command === 'string' && !ran.deny && !ran.isError)
+      flujo?.comando(e.agentId, args.command)
     // Solo observa: un fallo al anotar nunca debe alterar el resultado de la herramienta.
     try {
       const ms = (await $.clock.now()) - t0
@@ -591,6 +780,7 @@ export const register: Register = on => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const u = await read($, usage)
     const ts = await read($, tools)
+    const filasEquipos = await read($, equipos)
     const servers = await read($, mcp)
     const m = await read($, mem)
     const at = await read($, updatedAt)
@@ -805,6 +995,17 @@ export const register: Register = on => {
             </Button>
           </Box>
         </Box>
+        {!!filasEquipos.length && (
+          <Box flexDirection="column">
+            <Text bold color={th.accent}>Equipos de desarrollo</Text>
+            {filasEquipos.map(f => (
+              <Text key={f.id} color={f.demorada || f.estado === 'pendiente' ? th.warn : undefined}>
+                {f.equipo} · {f.id} · {f.estado}{f.demorada ? ' · demorada' : ''}
+                {f.verificacion ? ' · PHP ' + f.verificacion : ''}
+              </Text>
+            ))}
+          </Box>
+        )}
       </Box>
     )
   })

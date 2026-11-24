@@ -1,5 +1,9 @@
 # Cambios
 
+## 1.6.0
+- Equipos de Desarrollo con dependencias, concurrencia acotada, puntos de control e integración de ub-mode.
+- Verificación diferencial independiente de PHP fuera de Apache con Docker sin red.
+
 ## 1.5.0
 - Multiplataforma: Windows, macOS y Linux. La instalación, la actualización, `doctor` y la desinstalación pasan a `toolkit.py` y `memory-engine/engine.py` (solo biblioteca estándar). `install.ps1` / `uninstall.ps1` quedan como lanzadores en Windows, con los mismos parámetros; en macOS/Linux, `install.sh` / `uninstall.sh` (`--no-dev-agents`, `--no-tablero`, `--toolkit-dir`, `--claude-dir`).
 - Lanzadores POSIX `memory` y `run` junto a `memory.cmd` / `run.cmd`. `CLAUDE.md` y los agentes instalados nombran el del sistema.

@@ -87,7 +87,7 @@ test('elegir un modo agrega su rol al prompt de sistema', async ($, on) => {
     plugin: 'tablero',
     surface: 'terminal',
     component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+    props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
   })
   expect(await band.find({ type: 'Text', text: /Para qué es esta sesión/ })).toBeDefined()
   await band.press({ key: 'ciber' })
@@ -182,4 +182,41 @@ test('el panel dibuja sus secciones en terminal y desktop', async $ => {
     expect(await ui.find({ type: 'Button' })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('el modo Desarrollo solicita agentes nativos y muestra las tareas rechazadas por el motor', async ($, on) => {
+  const lanzamientos: string[] = []
+  on('session.root', () => ({ value: '/proyecto' }))
+  on('clock.now', () => ({ value: 1000 }))
+  on('agent.spawn', (_$, e) => {
+    lanzamientos.push((e as unknown as { subagent_type?: string }).subagent_type ?? '')
+    return { deny: 'Motor de prueba sin agentes vivos' }
+  })
+  on('process.run', () => ({ value: { exitCode: 0, stdout: 'a'.repeat(40), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', ($, e) => ({ ...h($.ui.resolve(e).Box, {}) }) as RenderElement)
+  const pane = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 50 }, view: {} },
+  })
+  await pane.press({ key: 'cambiar-modo' })
+  const band = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+  })
+  await band.press({ key: 'dev' })
+  const result = await $.tool.call({
+    tool: 'mcp__tablero__equipos_desarrollo',
+    accion: 'iniciar',
+    tareas: [
+      { id: 'catalogo', equipo: 'Catálogo', tipo: 'implementacion', objetivo: 'Listar dinosaurios', archivos: ['listado.php'] },
+      { id: 'ficha', equipo: 'Ficha', tipo: 'preparacion', objetivo: 'Definir casos de la ficha' },
+      { id: 'integrar', equipo: 'Integración', tipo: 'integracion', objetivo: 'Abrir el detalle de un resultado', depende: ['ficha', 'catalogo'] },
+    ],
+  })
+  expect(result.deny).toBeUndefined()
+  expect(lanzamientos).toEqual(['tablero:desarrollo-dev', 'tablero:desarrollo-verificador'])
+  expect(JSON.stringify(result.result)).toContain('bloqueado')
+  expect((await pane.find({ type: 'Text', text: /Catálogo · catalogo/ }))?.text).toContain('pendiente')
 })
