@@ -101,6 +101,8 @@ test('elegir un modo agrega su rol al prompt de sistema', async ($, on) => {
   const sections = (await $.prompt.compose(ask)).sections
   expect(sections.map(s => s.id)).toEqual(['intro', 'tablero:modo'])
   expect(sections[1]?.text).toContain('Modo de la sesión: Ciberseguridad')
+  expect(sections[1]?.text).toContain('revisor defensivo de código')
+  expect(sections[1]?.text).toContain('pruebas automatizadas locales')
   expect(sections[1]?.scope).toBe('session')
   expect((await pane.find({ type: 'Text', text: /^Modo/ }))?.text).toContain('Ciberseguridad')
   // la barra se cierra tras elegir
