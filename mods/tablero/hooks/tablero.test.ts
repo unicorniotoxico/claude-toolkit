@@ -115,6 +115,7 @@ test('la apariencia se cambia desde el panel', async $ => {
     requestId: 'tablero',
     props: { title: 'Tablero', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
   })
+  await ui.press({ key: 'seccion:apariencia' })
   const label = async (key: string) => (await ui.find({ key }))?.text ?? ''
   expect(await label('tema')).toContain('tema claude')
   await ui.press({ key: 'tema' })
@@ -168,7 +169,7 @@ test('parsea la salida de memory.cmd stats', async () => {
   expect(parseMemStats(out)).toEqual({ active: 15, stale: 1, prompts: 68, injected: 1, hookP95: 313 })
 })
 
-test('el índice navega a sus secciones y la pestaña Agentes reemplaza la vista General', async $ => {
+test('las secciones se despliegan en su lugar y la pestaña Agentes reemplaza la vista General', async $ => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const props = {
       title: 'Tablero',
@@ -179,23 +180,33 @@ test('el índice navega a sus secciones y la pestaña Agentes reemplaza la vista
       view: {},
     } as const
     const ui = await $.ui.mount({ plugin: 'tablero', surface, component: 'Pane', props, requestId: 'tablero' })
-    expect(await ui.find({ type: 'Text', text: /Esta sesión/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Sesiones locales/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /No hay otras sesiones/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Memory-engine/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Todavía no se lanzó ninguno/ })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: /Sin lectura todavía/ })).toBeDefined()
-    expect(await ui.find({ type: 'Button' })).toBeDefined()
-    const secciones = ['sesion', 'cuenta', 'sesiones', 'mcp', 'herramientas', 'memoria', 'apariencia']
-    for (const id of secciones) {
-      await ui.press({ key: `ir:${id}` })
+    const secciones = [
+      ['sesion', /Costo:/],
+      ['cuenta', /Sin lectura todavía/],
+      ['sesiones', /No hay otras sesiones/],
+      ['mcp', /Sin servidores MCP/],
+      ['herramientas', /Todavía ninguna/],
+      ['memoria', /Cargando/],
+      ['apariencia', /tema claude/],
+    ] as const
+    for (const [id, texto] of secciones) {
       expect(await ui.find({ key: `seccion:${id}` })).toBeDefined()
-      expect(await ui.find({ key: 'ir:todas' })).toBeDefined()
-      await ui.press({ key: 'ir:todas' })
+      expect(await ui.find({ text: texto })).toBeUndefined()
+      await ui.press({ key: `seccion:${id}` })
+      expect(await ui.find({ text: texto })).toBeDefined()
+      expect(await ui.find({ key: 'seccion:sesiones' })).toBeDefined()
+      await ui.press({ key: `seccion:${id}` })
+      expect(await ui.find({ text: texto })).toBeUndefined()
     }
+    await ui.press({ key: 'seccion:sesion' })
+    await ui.press({ key: 'seccion:cuenta' })
+    expect(await ui.find({ text: /Costo:/ })).toBeDefined()
+    expect(await ui.find({ text: /Sin lectura todavía/ })).toBeDefined()
+    await ui.press({ key: 'seccion:sesion' })
+    await ui.press({ key: 'seccion:cuenta' })
     await ui.press({ key: 'tab:agentes' })
     expect(await ui.find({ key: 'seccion:mcp' })).toBeUndefined()
-    expect(await ui.find({ key: 'ir:sesion' })).toBeUndefined()
+    expect(await ui.find({ key: 'seccion:sesion' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /Todavía no se lanzó ninguno/ })).toBeDefined()
     await ui.press({ key: 'tab:general' })
     expect(await ui.find({ key: 'seccion:mcp' })).toBeDefined()

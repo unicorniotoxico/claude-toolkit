@@ -19,15 +19,6 @@ const texto = { type: 'string' }
 
 const PANE = 'tablero'
 const TITLE = 'Tablero'
-const SECCIONES = [
-  ['sesion', 'Esta sesión'],
-  ['cuenta', 'Cuenta'],
-  ['sesiones', 'Sesiones locales'],
-  ['mcp', 'MCP'],
-  ['herramientas', 'Herramientas'],
-  ['memoria', 'Memory-engine'],
-  ['apariencia', 'Apariencia'],
-] as const
 const usage = atom({ plugin: 'tablero', key: 'usage' } as const, null)
 const tools = atom({ plugin: 'tablero', key: 'tools' } as const, {})
 const mcp = atom({ plugin: 'tablero', key: 'mcp' } as const, [])
@@ -45,8 +36,7 @@ const look = atom({ plugin: 'tablero', key: 'look' } as const, DEFAULT_LOOK)
 const mcpOff = atom({ plugin: 'tablero', key: 'mcpOff' } as const, [])
 const equipos = atom({ plugin: 'tablero', key: 'equipos' } as const, [])
 const tab = atom({ plugin: 'tablero', key: 'tab' } as const, 'general')
-const seccionActiva = atom({ plugin: 'tablero', key: 'seccionActiva' } as const, null)
-const showMcp = atom({ plugin: 'tablero', key: 'showMcp' } as const, false)
+const seccionesAbiertas = atom({ plugin: 'tablero', key: 'seccionesAbiertas' } as const, [])
 const showIdle = atom({ plugin: 'tablero', key: 'showIdle' } as const, false)
 
 // Temas: colores de títulos, barras y estados. 'claude' sigue el tema de Claude Code (claro u oscuro).
@@ -387,6 +377,10 @@ async function toggleMcp($: EngineInterface, server: string) {
   // la lista de herramientas del prompt cambia en el próximo pedido al modelo
   $.ui.invalidate('tool.describe')
   $.ui.toast(isOff ? `MCP ${server} prendido` : `MCP ${server} apagado`)
+}
+
+function toggleSection($: EngineInterface, id: string) {
+  return update($, seccionesAbiertas, ids => ids.includes(id) ? ids.filter(current => current !== id) : [...ids, id])
 }
 
 async function setLook($: EngineInterface, change: (l: Look) => Look) {
@@ -811,9 +805,9 @@ export const register: Register = on => {
     const curMode = await read($, mode)
     const off = await read($, mcpOff)
     const tabActual = await read($, tab)
-    const mcpAbierto = await read($, showMcp)
-    const enfocada = await read($, seccionActiva)
-    const visible = (id: string) => enfocada === null || enfocada === id
+    const abiertas = await read($, seccionesAbiertas)
+    const abierta = (id: string) => abiertas.includes(id)
+    const flecha = (id: string) => abierta(id) ? '▾' : '▸'
 
     const toolRows = Object.entries(ts).sort((a, b) => b[1].calls - a[1].calls)
     const mcpStat = (name: string) => ts[`mcp:${name}`]
@@ -833,176 +827,166 @@ export const register: Register = on => {
         </Box>
 
         <Box flexDirection="column">
-          <Text bold color={th.accent}>Secciones</Text>
-          <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-            {SECCIONES.map(([id, nombre]) => (
-              <Button key={`ir:${id}`} plain onPress={async () => {
-                if (enfocada === null) {
-                  try {
-                    const scroll = await $.ui.scroll({ in: PANE, to: { key: `seccion:${id}` }, block: 'start' })
-                    if (!scroll.deny) return
-                  } catch {}
-                }
-                await update($, seccionActiva, () => id)
-              }}>
-                <Text color={th.accent}>{nombre}</Text>
-              </Button>
-            ))}
-            {enfocada !== null && (
-              <Button key="ir:todas" plain onPress={() => update($, seccionActiva, () => null)}>Ver todas</Button>
-            )}
-          </Box>
+          <Button key="seccion:sesion" plain onPress={() => toggleSection($, 'sesion')}>
+            <Text bold color={th.accent}>{flecha('sesion')} Esta sesión</Text>
+          </Button>
+          {abierta('sesion') && (
+            <Box flexDirection="column">
+              <Text>Costo: {usd(u?.usd)}</Text>
+              <Text>
+                Contexto: <Text color={barColor(u?.ctxPercent ?? 0)}>{bar(u?.ctxPercent ?? 0)}</Text>{' '}
+                {u?.ctxPercent !== undefined ? `${Math.round(u.ctxPercent)}%` : '?'}{' '}
+                <Text dimColor>
+                  ({k(u?.ctxTokens)} / {k(u?.ctxWindow)})
+                </Text>
+              </Text>
+            </Box>
+          )}
         </Box>
 
-        {visible('sesion') && (
-          <Box key="seccion:sesion" flexDirection="column">
+        <Box flexDirection="column">
+          <Button key="seccion:cuenta" plain onPress={() => toggleSection($, 'cuenta')}>
             <Text bold color={th.accent}>
-              Esta sesión
+              {flecha('cuenta')} Cuenta <Text dimColor>{lim ? `(lectura de ${lim.from}, hace ${duration(now - lim.at)})` : ''}</Text>
             </Text>
-            <Text>Costo: {usd(u?.usd)}</Text>
-            <Text>
-              Contexto: <Text color={barColor(u?.ctxPercent ?? 0)}>{bar(u?.ctxPercent ?? 0)}</Text>{' '}
-              {u?.ctxPercent !== undefined ? `${Math.round(u.ctxPercent)}%` : '?'}{' '}
-              <Text dimColor>
-                ({k(u?.ctxTokens)} / {k(u?.ctxWindow)})
-              </Text>
-            </Text>
-          </Box>
-        )}
-
-        {visible('cuenta') && (
-          <Box key="seccion:cuenta" flexDirection="column">
-            <Text bold color={th.accent}>
-              Cuenta <Text dimColor>{lim ? `(lectura de ${lim.from}, hace ${duration(now - lim.at)})` : ''}</Text>
-            </Text>
-            {!lim && <Text dimColor>Sin lectura todavía: llega con la primera respuesta del modelo en cualquier sesión local.</Text>}
-            {(lim?.limits ?? []).map(l => (
-              <Text>
-                {l.kind === 'five_hour' ? '5 h' : l.kind === 'seven_day' ? '7 días' : l.kind}:{' '}
-                <Text color={barColor(l.percentUsed)}>{bar(l.percentUsed)}</Text> {Math.round(l.percentUsed)}%
-                {l.resetsAt ? (
-                  <Text dimColor>
-                    {' '}
-                    · reinicia {new Date(l.resetsAt).toLocaleString('es-AR', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
-                  </Text>
-                ) : (
-                  ''
-                )}
-              </Text>
-            ))}
-            {lim && !lk.compacto && <Text dimColor>El uso en la web se refleja con la próxima respuesta en una sesión local.</Text>}
-          </Box>
-        )}
-
-        {visible('sesiones') && (
-          <Box key="seccion:sesiones" flexDirection="column">
-            <Text bold color={th.accent}>
-              Sesiones locales{' '}
-              <Text dimColor>
-                ({sess.activeCount} activas · {usd(sess.totalUsd)} en 24 h)
-              </Text>
-            </Text>
-            {activeOthers.length === 0 && <Text dimColor>No hay otras sesiones activas en esta máquina.</Text>}
-            {activeOthers.map(s => (
-              <Text key={s.id}>
-                <Text color={th.ok}>●</Text> {s.folder || s.id.slice(0, 8)}
-                <Text dimColor>
-                  {' '}
-                  · {usd(s.usd)}
-                  {s.ctxPercent !== undefined ? ` · ctx ${Math.round(s.ctxPercent)}%` : ''}
-                  {s.activeAgents ? ` · ${s.activeAgents} agentes` : ''}
-                </Text>
-              </Text>
-            ))}
-            {idleOthers.length > 0 && (
-              <Button key="ver-inactivas" plain onPress={() => update($, showIdle, v => !v)}>
-                <Text dimColor>
-                  {idleOpen ? '▾' : '▸'} {idleOthers.length} cerradas o inactivas · {usd(idleOthers.reduce((t, x) => t + (x.usd ?? 0), 0))}
-                  {idleOpen ? ' · ocultar' : ' · ver'}
-                </Text>
-              </Button>
-            )}
-            {idleOpen &&
-              idleOthers.map(s => (
-                <Text key={s.id} dimColor>
-                  {'  '}○ {s.folder || s.id.slice(0, 8)} · {usd(s.usd)} · {s.ended ? 'cerrada' : 'inactiva'} hace{' '}
-                  {duration(now - s.updatedAt)}
+          </Button>
+          {abierta('cuenta') && (
+            <Box flexDirection="column">
+              {!lim && <Text dimColor>Sin lectura todavía: llega con la primera respuesta del modelo en cualquier sesión local.</Text>}
+              {(lim?.limits ?? []).map(l => (
+                <Text>
+                  {l.kind === 'five_hour' ? '5 h' : l.kind === 'seven_day' ? '7 días' : l.kind}:{' '}
+                  <Text color={barColor(l.percentUsed)}>{bar(l.percentUsed)}</Text> {Math.round(l.percentUsed)}%
+                  {l.resetsAt ? (
+                    <Text dimColor>
+                      {' '}
+                      · reinicia {new Date(l.resetsAt).toLocaleString('es-AR', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  ) : (
+                    ''
+                  )}
                 </Text>
               ))}
-          </Box>
-        )}
+              {lim && !lk.compacto && <Text dimColor>El uso en la web se refleja con la próxima respuesta en una sesión local.</Text>}
+            </Box>
+          )}
+        </Box>
 
-        {visible('mcp') && (
-          <Box flexDirection="column">
-            <Button key="seccion:mcp" plain onPress={() => update($, showMcp, v => !v)}>
-              <Text bold color={th.accent}>{mcpAbierto ? '▾' : '▸'} MCP</Text>{' '}
-              <Text dimColor>({servers.length} servidores)</Text>
-            </Button>
-            {mcpAbierto && servers.length === 0 && <Text dimColor>Sin servidores MCP con herramientas cargadas.</Text>}
-            {mcpAbierto && servers.map(s => {
-              const st = mcpStat(s.name)
-              const isOff = off.includes(s.name)
-              return (
-                <Button key={`mcp:${s.name}`} plain onPress={() => toggleMcp($, s.name)}>
-                  <Text color={isOff ? th.muted : st && st.errors > 0 ? th.warn : th.ok}>{isOff ? '○' : '●'}</Text> {s.name}{' '}
+        <Box flexDirection="column">
+          <Button key="seccion:sesiones" plain onPress={() => toggleSection($, 'sesiones')}>
+            <Text bold color={th.accent}>
+              {flecha('sesiones')} Sesiones locales{' '}
+              <Text dimColor>({sess.activeCount} activas · {usd(sess.totalUsd)} en 24 h)</Text>
+            </Text>
+          </Button>
+          {abierta('sesiones') && (
+            <Box flexDirection="column">
+              {activeOthers.length === 0 && <Text dimColor>No hay otras sesiones activas en esta máquina.</Text>}
+              {activeOthers.map(s => (
+                <Text key={s.id}>
+                  <Text color={th.ok}>●</Text> {s.folder || s.id.slice(0, 8)}
                   <Text dimColor>
-                    {isOff
-                      ? '· apagado · clic para prender'
-                      : `· ${s.tools} tools${st ? ` · ${st.calls} llamadas${st.errors ? `, ${st.errors} con error` : ''} · última ${st.lastMs} ms` : ''}`}
+                    {' '}
+                    · {usd(s.usd)}
+                    {s.ctxPercent !== undefined ? ` · ctx ${Math.round(s.ctxPercent)}%` : ''}
+                    {s.activeAgents ? ` · ${s.activeAgents} agentes` : ''}
+                  </Text>
+                </Text>
+              ))}
+              {idleOthers.length > 0 && (
+                <Button key="ver-inactivas" plain onPress={() => update($, showIdle, v => !v)}>
+                  <Text dimColor>
+                    {idleOpen ? '▾' : '▸'} {idleOthers.length} cerradas o inactivas · {usd(idleOthers.reduce((t, x) => t + (x.usd ?? 0), 0))}
+                    {idleOpen ? ' · ocultar' : ' · ver'}
                   </Text>
                 </Button>
-              )
-            })}
-          </Box>
-        )}
-
-        {visible('herramientas') && (
-          <Box key="seccion:herramientas" flexDirection="column">
-            <Text bold color={th.accent}>
-              Herramientas usadas
-            </Text>
-            {toolRows.length === 0 && <Text dimColor>Todavía ninguna.</Text>}
-            {toolRows.slice(0, lk.compacto ? 5 : 10).map(([name, st]) => (
-              <Text>
-                {name}{' '}
-                <Text dimColor>
-                  · {st.calls}×{st.errors ? ` · ${st.errors} error` : ''} · {st.lastMs} ms
-                </Text>
-              </Text>
-            ))}
-          </Box>
-        )}
-
-        {visible('memoria') && (
-          <Box key="seccion:memoria" flexDirection="column">
-            <Text bold color={th.accent}>
-              Memory-engine
-            </Text>
-            {!m && <Text dimColor>Cargando…</Text>}
-            {m?.error && <Text color={th.bad}>No se pudo leer: {m.error}</Text>}
-            {m && !m.error && (
-              <Box flexDirection="column">
-                <Text>
-                  Recuerdos: {m.active} activos{m.stale ? <Text color={th.warn}>, {m.stale} vencidos</Text> : ''}
-                </Text>
-                <Text>
-                  Inyecciones: {m.injected} en {m.prompts} prompts <Text dimColor>· hook p95 {m.hookP95} ms</Text>
-                </Text>
-              </Box>
-            )}
-          </Box>
-        )}
-
-        {visible('apariencia') && (
-          <Box flexDirection="column">
-            <Box flexDirection="row" gap={1}>
-              <Button key="actualizar" onPress={async () => once('all', () => refreshAll($))}>
-                Actualizar todo
-              </Button>
-              <Text dimColor>consumo cada 2 s · revisión completa {hhmm(at)}</Text>
+              )}
+              {idleOpen &&
+                idleOthers.map(s => (
+                  <Text key={s.id} dimColor>
+                    {'  '}○ {s.folder || s.id.slice(0, 8)} · {usd(s.usd)} · {s.ended ? 'cerrada' : 'inactiva'} hace{' '}
+                    {duration(now - s.updatedAt)}
+                  </Text>
+                ))}
             </Box>
-            <Box key="seccion:apariencia" flexDirection="row" gap={1}>
-              <Text dimColor>Apariencia:</Text>
+          )}
+        </Box>
+
+        <Box flexDirection="column">
+          <Button key="seccion:mcp" plain onPress={() => toggleSection($, 'mcp')}>
+            <Text bold color={th.accent}>{flecha('mcp')} MCP</Text>{' '}
+            <Text dimColor>({servers.length} servidores)</Text>
+          </Button>
+          {abierta('mcp') && servers.length === 0 && <Text dimColor>Sin servidores MCP con herramientas cargadas.</Text>}
+          {abierta('mcp') && servers.map(s => {
+            const st = mcpStat(s.name)
+            const isOff = off.includes(s.name)
+            return (
+              <Button key={`mcp:${s.name}`} plain onPress={() => toggleMcp($, s.name)}>
+                <Text color={isOff ? th.muted : st && st.errors > 0 ? th.warn : th.ok}>{isOff ? '○' : '●'}</Text> {s.name}{' '}
+                <Text dimColor>
+                  {isOff
+                    ? '· apagado · clic para prender'
+                    : `· ${s.tools} tools${st ? ` · ${st.calls} llamadas${st.errors ? `, ${st.errors} con error` : ''} · última ${st.lastMs} ms` : ''}`}
+                </Text>
+              </Button>
+            )
+          })}
+        </Box>
+
+        <Box flexDirection="column">
+          <Button key="seccion:herramientas" plain onPress={() => toggleSection($, 'herramientas')}>
+            <Text bold color={th.accent}>{flecha('herramientas')} Herramientas usadas</Text>
+          </Button>
+          {abierta('herramientas') && (
+            <Box flexDirection="column">
+              {toolRows.length === 0 && <Text dimColor>Todavía ninguna.</Text>}
+              {toolRows.slice(0, lk.compacto ? 5 : 10).map(([name, st]) => (
+                <Text>
+                  {name}{' '}
+                  <Text dimColor>
+                    · {st.calls}×{st.errors ? ` · ${st.errors} error` : ''} · {st.lastMs} ms
+                  </Text>
+                </Text>
+              ))}
+            </Box>
+          )}
+        </Box>
+
+        <Box flexDirection="column">
+          <Button key="seccion:memoria" plain onPress={() => toggleSection($, 'memoria')}>
+            <Text bold color={th.accent}>{flecha('memoria')} Memory-engine</Text>
+          </Button>
+          {abierta('memoria') && (
+            <Box flexDirection="column">
+              {!m && <Text dimColor>Cargando…</Text>}
+              {m?.error && <Text color={th.bad}>No se pudo leer: {m.error}</Text>}
+              {m && !m.error && (
+                <Box flexDirection="column">
+                  <Text>
+                    Recuerdos: {m.active} activos{m.stale ? <Text color={th.warn}>, {m.stale} vencidos</Text> : ''}
+                  </Text>
+                  <Text>
+                    Inyecciones: {m.injected} en {m.prompts} prompts <Text dimColor>· hook p95 {m.hookP95} ms</Text>
+                  </Text>
+                </Box>
+              )}
+            </Box>
+          )}
+        </Box>
+
+        <Box flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Button key="actualizar" onPress={async () => once('all', () => refreshAll($))}>
+              Actualizar todo
+            </Button>
+            <Text dimColor>consumo cada 2 s · revisión completa {hhmm(at)}</Text>
+          </Box>
+          <Button key="seccion:apariencia" plain onPress={() => toggleSection($, 'apariencia')}>
+            <Text bold color={th.accent}>{flecha('apariencia')} Apariencia</Text>
+          </Button>
+          {abierta('apariencia') && (
+            <Box flexDirection="row" gap={1}>
               <Button key="tema" plain onPress={() => setLook($, l => ({ ...l, tema: nextOf(Object.keys(THEMES), l.tema) }))}>
                 tema {lk.tema} ›
               </Button>
@@ -1020,8 +1004,8 @@ export const register: Register = on => {
                 {lk.compacto ? '☑' : '☐'} compacto
               </Button>
             </Box>
-          </Box>
-        )}
+          )}
+        </Box>
       </Box>
     )
 
