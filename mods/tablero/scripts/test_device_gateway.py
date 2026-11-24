@@ -66,6 +66,7 @@ class DevicePolicyTest(unittest.TestCase):
                 worker = threading.Thread(target=server.serve_forever, daemon=True)
                 worker.start()
                 try:
+                    self.assertTrue(gateway.gateway_ready({**receiver, 'port': server.server_port}))
                     target = gateway.fingerprint(gateway.certificate(receiver["cert"]))
                     peer = gateway.fingerprint(gateway.certificate(sender["cert"]))
                     def send(kind, data, expected=target):

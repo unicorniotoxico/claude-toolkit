@@ -25,7 +25,7 @@ export const FORMULARIO_INICIAL: FormularioDispositivo = {
   bloque: 'status', minutos: '30', coincide: false,
 }
 
-export function prepararEnvio(form: FormularioDispositivo, invitacion: boolean) {
+export function validarDestino(form: FormularioDispositivo) {
   const host = form.host.trim()
   const puerto = Number(form.puerto)
   const huella = form.huella.replace(/[ :]/g, '').toLowerCase()
@@ -34,10 +34,15 @@ export function prepararEnvio(form: FormularioDispositivo, invitacion: boolean) 
     throw new Error('Ingresá la dirección y el puerto de la otra PC.')
   if (!/^[a-f0-9]{64}$/.test(huella) || !form.coincide)
     throw new Error('Compará la huella completa y confirmá que coincide.')
+  return [host, String(puerto), huella] as const
+}
+
+export function prepararEnvio(form: FormularioDispositivo, invitacion: boolean) {
+  const [host, puerto, huella] = validarDestino(form)
   if (invitacion) {
     const code = form.codigo.trim().toLowerCase()
     if (!/^[a-f0-9]{32}$/.test(code)) throw new Error('Pegá el código temporal de la otra PC.')
-    return [host, String(puerto), huella, 'vinculacion', 'pair', JSON.stringify({ code })]
+    return [host, puerto, huella, 'vinculacion', 'pair', JSON.stringify({ code })]
   }
   const proyecto = form.proyecto.trim()
   if (!/^[a-z0-9][a-z0-9_.-]{0,79}$/i.test(proyecto))
@@ -56,7 +61,7 @@ export function prepararEnvio(form: FormularioDispositivo, invitacion: boolean) 
       throw new Error('Elegí un estado del proyecto.')
     data = { state: form.valor }
   }
-  return [host, String(puerto), huella, proyecto, form.bloque, JSON.stringify(data)]
+  return [host, puerto, huella, proyecto, form.bloque, JSON.stringify(data)]
 }
 
 export function describirBloque(kind: string, raw: string) {

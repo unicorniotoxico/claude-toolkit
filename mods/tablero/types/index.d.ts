@@ -75,9 +75,12 @@ export type FormularioDispositivo = {
   valor: string; revision: string; minutos: string; coincide: boolean
   bloque: 'status' | 'test_result' | 'work_request'
 }
-export type VistaDispositivos = 'inicio' | 'usar' | 'permisos' | 'enviar' | 'actividad' | 'configuracion'
+export type VistaDispositivos = 'inicio' | 'usar' | 'permisos' | 'enviar' | 'actividad' | 'identidad' | 'red' | 'activar' | 'agregar' | 'invitar' | 'destino'
+export type ConfiguracionDispositivos = {
+  cert: string; clave: string; autoridad: string; ip: string; puerto: string; origenes: string
+}
 export type EstadoDispositivos = {
-  conexion?: { estado: 'sin_configurar' | 'invalida' | 'configurada'; huella?: string; puerto?: number }
+  conexion?: { estado: 'sin_configurar' | 'invalida' | 'configurada'; huella?: string; puerto?: number; direccion?: string }
 
   enabled: boolean
   pending: Array<[string, number]>
@@ -123,6 +126,7 @@ declare module 'claude-code' {
       peerDispositivo: string
       codigoDispositivo: string
       mensajeDispositivo: string
+      configuracionDispositivos: ConfiguracionDispositivos
     }
   }
 }

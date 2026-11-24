@@ -343,18 +343,53 @@ test('Dispositivos explica el estado y prepara un envío antes de confirmarlo', 
   })
   await ui.press({ key: 'tab:dispositivos' })
   expect(await ui.find({ text: /Enlace habilitado/ })).toBeDefined()
+  await ui.press({ key: 'dispositivos:agregar' })
   await ui.press({ key: 'dispositivos:usar' })
-  await ui.press({ key: 'dispositivos:previa' })
+  expect(await ui.find({ key: 'dispositivo:codigo' })).toBeUndefined()
+  await ui.press({ key: 'dispositivos:paso-destino' })
   expect(await ui.find({ text: /Ingresá la dirección/ })).toBeDefined()
   await ui.input({ key: 'dispositivo:destino:host', text: '192.168.1.10', kind: 'submit' })
   await ui.input({ key: 'dispositivo:destino:puerto', text: '4321', kind: 'submit' })
   await ui.input({ key: 'dispositivo:destino:huella', text: peer, kind: 'submit' })
-  await ui.input({ key: 'dispositivo:codigo', text: 'b'.repeat(32), kind: 'submit' })
   await ui.press({ key: 'dispositivos:coincide-destino' })
+  await ui.press({ key: 'dispositivos:paso-destino' })
+  await ui.input({ key: 'dispositivo:codigo', text: 'b'.repeat(32), kind: 'submit' })
   await ui.press({ key: 'dispositivos:previa' })
   expect(await ui.find({ text: 'Vista previa' })).toBeDefined()
   expect(calls.flat()).not.toContain('send')
   await ui.press({ key: 'dispositivos:enviar' })
   expect(calls.flat()).toContain('send')
   expect(await ui.find({ text: /La otra PC tiene que aprobarla/ })).toBeDefined()
+})
+
+test('Agregar dispositivo desbloquea red solo después de validar los certificados', async ($, on) => {
+  const calls: string[] = []
+  on('process.run', (_$, e) => {
+    const action = (e as unknown as { argv: string[] }).argv[4] ?? ''
+    calls.push(action)
+    return { value: {
+      exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false,
+      stdout: action === 'snapshot' ? '{"enabled":false,"conexion":{"estado":"sin_configurar"},"pending":[],"grants":[],"inbox":[],"alerts":[]}' : '{"ok":true}',
+    } }
+  })
+  const ui = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  })
+  await ui.press({ key: 'tab:dispositivos' })
+  expect(await ui.find({ text: /Agregar dispositivo/ })).toBeDefined()
+  expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeUndefined()
+  await ui.press({ key: 'dispositivos:agregar' })
+  expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeDefined()
+  expect(await ui.find({ key: 'dispositivo:config:ip' })).toBeUndefined()
+  await ui.press({ key: 'dispositivos:paso' })
+  expect(await ui.find({ text: /Completá los tres archivos/ })).toBeDefined()
+  expect(calls).not.toContain('check-identity')
+  for (const [key, value] of [['cert', '/test/cert.pem'], ['clave', '/test/key.pem'], ['autoridad', '/test/ca.pem']])
+    await ui.input({ key: 'dispositivo:config:' + key, text: value ?? '', kind: 'submit' })
+  await ui.press({ key: 'dispositivos:paso' })
+  expect(calls).toContain('check-identity')
+  expect(await ui.find({ key: 'dispositivo:config:ip' })).toBeDefined()
+  expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeUndefined()
+  expect(calls).not.toContain('start-gateway')
 })

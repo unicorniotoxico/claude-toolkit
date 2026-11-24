@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRun, EstadoDispositivos, FormularioDispositivo, PreferenciasSeguridad, VistaDispositivos, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
+import type { AgentRun, ConfiguracionDispositivos, EstadoDispositivos, FormularioDispositivo, PreferenciasSeguridad, VistaDispositivos, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
 import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
-import { ALERTAS, BLOQUES, FORMULARIO_INICIAL, describirBloque, prepararEnvio } from './dispositivos'
+import { ALERTAS, BLOQUES, FORMULARIO_INICIAL, describirBloque, prepararEnvio, validarDestino } from './dispositivos'
 import { leerPropuesta } from './herramientas'
 import { Equipos, planValidado, promptTarea, TIPOS } from './equipos'
 
@@ -54,6 +54,8 @@ const formularioDispositivo = atom({ plugin: 'tablero', key: 'formularioDisposit
 const peerDispositivo = atom({ plugin: 'tablero', key: 'peerDispositivo' } as const, '')
 const codigoDispositivo = atom({ plugin: 'tablero', key: 'codigoDispositivo' } as const, '')
 const mensajeDispositivo = atom({ plugin: 'tablero', key: 'mensajeDispositivo' } as const, '')
+const configuracionDispositivos = atom({ plugin: 'tablero', key: 'configuracionDispositivos' } as const,
+  { cert: '', clave: '', autoridad: '', ip: '', puerto: '4321', origenes: '' })
 const showIdle = atom({ plugin: 'tablero', key: 'showIdle' } as const, false)
 
 // Temas: colores de títulos, barras y estados. 'claude' sigue el tema de Claude Code (claro u oscuro).
@@ -348,12 +350,15 @@ async function refreshAll($: EngineInterface) {
 
 async function gateway($: EngineInterface, action: string, args: string[] = []) {
   const base = $.plugin.root + '/../../memory-engine'
+  const porEntrada = ['send', 'check-identity', 'configure'].includes(action)
   const result = await $.process.run([base + '/' + venvPython, '-I', $.plugin.root + '/scripts/device_gateway.py',
-    base + '/data/dispositivos', action, ...(action === 'send' ? [] : args)], {
-    timeoutMs: 16_000, stdin: action === 'send' ? JSON.stringify(args) : undefined,
+    base + '/data/dispositivos', action, ...(porEntrada ? [] : args)], {
+    timeoutMs: 16_000, stdin: porEntrada ? JSON.stringify(args) : undefined,
   })
-  if (result.exitCode !== 0 || result.isStdoutTruncated) throw new Error('No se pudo completar la operación.')
-  return JSON.parse(result.stdout)
+  if (result.isStdoutTruncated) throw new Error('No se pudo completar la operación.')
+  const salida = JSON.parse(result.stdout)
+  if (result.exitCode !== 0) throw new Error(typeof salida.error === 'string' ? salida.error : 'No se pudo completar la operación.')
+  return salida
 }
 
 async function refrescarSeguridad($: EngineInterface, monitor = false) {
@@ -387,6 +392,51 @@ async function cambiarVistaDispositivo($: EngineInterface, vista: VistaDispositi
   await update($, peerDispositivo, () => '')
   await update($, envioDispositivo, () => [])
   await update($, formularioDispositivo, current => ({ ...current, codigo: '', valor: '', revision: '', coincide: false }))
+}
+
+async function comenzarVinculacion($: EngineInterface) {
+  const estado = await read($, estadoDispositivos)
+  const vista = estado?.conexion?.estado !== 'configurada' ? 'identidad' : estado.enabled ? 'agregar' : 'activar'
+  await cambiarVistaDispositivo($, vista)
+  await update($, codigoDispositivo, () => '')
+}
+
+let vinculoEnCurso = false
+
+async function avanzarVinculacion($: EngineInterface, paso: 'identidad' | 'red' | 'activar' | 'invitar' | 'destino') {
+  if (vinculoEnCurso) return
+  vinculoEnCurso = true
+  try {
+    const config = await read($, configuracionDispositivos)
+    const identidad = [config.cert, config.clave, config.autoridad]
+    if (paso === 'identidad') {
+      if (identidad.some(value => !value.trim())) throw new Error('Completá los tres archivos.')
+      await gateway($, 'check-identity', identidad)
+      await cambiarVistaDispositivo($, 'red')
+    } else if (paso === 'red') {
+      if (!config.ip.trim() || !config.puerto.trim() || !config.origenes.trim()) throw new Error('Completá la IP, el puerto y los origenes.')
+      await gateway($, 'configure', [...identidad, config.ip, config.puerto, config.origenes])
+      await refrescarSeguridad($)
+      await cambiarVistaDispositivo($, 'activar')
+    } else if (paso === 'activar') {
+      await gateway($, 'link', ['on'])
+      await refrescarSeguridad($)
+      await cambiarVistaDispositivo($, 'agregar')
+    } else if (paso === 'invitar') {
+      await gateway($, 'start-gateway')
+      const invitacion = await gateway($, 'invite')
+      await cambiarVistaDispositivo($, 'invitar')
+      await update($, codigoDispositivo, () => String(invitacion.code))
+    } else {
+      validarDestino(await read($, formularioDispositivo))
+      await update($, vistaDispositivo, () => 'usar')
+      await update($, mensajeDispositivo, () => '')
+    }
+  } catch (error) {
+    await update($, mensajeDispositivo, () => error instanceof Error ? error.message : 'Revisá este paso.')
+  } finally {
+    vinculoEnCurso = false
+  }
 }
 
 async function plantearEnvioDispositivo($: EngineInterface, invitacion: boolean) {
@@ -1097,12 +1147,17 @@ export const register: Register = on => {
     const monitor = await read($, estadoMonitor)
     const envio = await read($, envioDispositivo)
     const vistaActual = await read($, vistaDispositivo)
+    const pasoAnterior = vistaActual === 'red' ? 'identidad' : vistaActual === 'destino' ? 'agregar' :
+      vistaActual === 'usar' ? 'destino' : undefined
     const formulario = await read($, formularioDispositivo)
     const peerElegido = await read($, peerDispositivo)
     const codigo = await read($, codigoDispositivo)
     const mensaje = await read($, mensajeDispositivo)
+    const config = await read($, configuracionDispositivos)
     const conexion = dispositivos?.conexion
     const configurada = conexion?.estado === 'configurada'
+    const camposCertificado = [['cert', 'Certificado de esta PC'], ['clave', 'Clave local'], ['autoridad', 'Certificado de la CA']] as const
+    const camposRed = [['ip', 'IP privada de esta PC'], ['puerto', 'Puerto'], ['origenes', 'IPs de las otras PCs (separadas por coma)']] as const
     const camposDestino = [['host', 'Dirección de la otra PC'], ['puerto', 'Puerto'], ['huella', 'Huella completa de la otra PC']] as const
     const bloques = Object.entries(BLOQUES) as Array<[FormularioDispositivo['bloque'], string]>
     const alertas = dispositivos?.alerts.filter(([rule]) => rule === 'remote_logon' ? seguridad.rdp :
@@ -1355,43 +1410,30 @@ export const register: Register = on => {
     const vistaDispositivos = tabActual === 'dispositivos' && (
       <Box flexDirection="column" gap={1}>
         {vistaActual !== 'inicio' && (
-          <Button key="dispositivos:volver" plain onPress={() => cambiarVistaDispositivo($, 'inicio')}>‹ Dispositivos</Button>
+          <Box flexDirection="row" gap={1}>
+            <Button key="dispositivos:volver" plain onPress={() => cambiarVistaDispositivo($, 'inicio')}>‹ Dispositivos</Button>
+            {pasoAnterior && (
+              <Button key="dispositivos:atras" plain onPress={async () => {
+                await update($, vistaDispositivo, () => pasoAnterior)
+                await update($, envioDispositivo, () => [])
+                await update($, mensajeDispositivo, () => '')
+              }}>Paso anterior</Button>
+            )}
+          </Box>
         )}
         {mensaje && <Text color={th.accent}>{mensaje}</Text>}
         {vistaActual === 'inicio' && (
           <Box flexDirection="column" gap={1}>
-            <Box flexDirection="column">
-              <Text bold>Esta PC</Text>
-              <Text color={configurada ? th.ok : th.warn}>
-                {!dispositivos ? 'Estado sin consultar' :
-                  conexion?.estado === 'invalida' ? 'Configuración de conexión incompleta o inválida' :
-                    !configurada ? 'Falta configurar la conexión' :
-                      dispositivos.enabled ? 'Enlace habilitado' : 'Enlace desactivado'}
-              </Text>
-              {configurada && <Text dimColor>Puerto configurado: {conexion?.puerto}</Text>}
-              {!configurada && dispositivos && (
-                <Button key="dispositivos:configurar" onPress={() => cambiarVistaDispositivo($, 'configuracion')}>Ver cómo configurar esta PC</Button>
+            <Button key="dispositivos:agregar" variant="primary" onPress={() => comenzarVinculacion($)}>＋ Agregar dispositivo</Button>
+            <Text dimColor>{configurada ? dispositivos?.enabled ? 'Enlace habilitado' : 'Enlace desactivado' : 'Primera conexión'}</Text>
+            <Box flexDirection="row" gap={1} flexWrap="wrap">
+              <Button key="dispositivos:actualizar" plain onPress={() => refrescarSeguridad($)}>Actualizar</Button>
+              {dispositivos?.enabled && (
+                <Button key="dispositivos:enlace" plain onPress={() => operarDispositivo($, 'link', ['off'])}>Desactivar enlace</Button>
               )}
-              <Box flexWrap="wrap" flexDirection="row" gap={1}>
-                <Button key="dispositivos:actualizar" plain onPress={() => refrescarSeguridad($)}>Actualizar estado</Button>
-                {(configurada || dispositivos?.enabled) && (
-                  <Button key="dispositivos:enlace" onPress={() => operarDispositivo($, 'link', [dispositivos?.enabled ? 'off' : 'on'])}>
-                    {dispositivos?.enabled ? 'Desactivar enlace' : 'Habilitar enlace'}
-                  </Button>
-                )}
-              </Box>
             </Box>
             {configurada && dispositivos?.enabled && (
-              <Box flexDirection="column" gap={1}>
-                <Box flexDirection="column">
-                  <Button key="dispositivos:invitar" onPress={() => operarDispositivo($, 'invite', [])}>Invitar a otra PC</Button>
-                  <Text dimColor>La otra PC va a necesitar el código y tu huella.</Text>
-                  {codigo && <Text>Código temporal: {codigo}</Text>}
-                  {codigo && <Text>Huella de esta PC: {conexion?.huella}</Text>}
-                </Box>
-                <Button key="dispositivos:usar" onPress={() => cambiarVistaDispositivo($, 'usar')}>Tengo una invitación</Button>
-                <Button key="dispositivos:nuevo-envio" onPress={() => cambiarVistaDispositivo($, 'enviar')}>Preparar un envío</Button>
-              </Box>
+              <Button key="dispositivos:nuevo-envio" onPress={() => cambiarVistaDispositivo($, 'enviar')}>Preparar un envío</Button>
             )}
             <Button key="dispositivos:permisos" onPress={() => cambiarVistaDispositivo($, 'permisos')}>
               Solicitudes y permisos{dispositivos?.pending.length ? ' · ' + dispositivos.pending.length + ' pendientes' : ''}
@@ -1402,16 +1444,66 @@ export const register: Register = on => {
           </Box>
         )}
 
-        {vistaActual === 'configuracion' && (
+        {(vistaActual === 'identidad' || vistaActual === 'red') && (
           <Box flexDirection="column" gap={1}>
-            <Text bold>Preparar esta PC para conectar</Text>
-            <Text>1. Prepará un certificado y una clave para cada PC, firmados por la misma CA privada.</Text>
-            <Text>2. Guardá gateway.json en la carpeta memory-engine/data/dispositivos con los certificados, la IP privada, el puerto y los orígenes permitidos.</Text>
-            <Text>3. Iniciá el gateway en la PC que recibe. La guía DEVICES.md en scripts del mod tiene el comando y los pasos del firewall.</Text>
-            <Button key="dispositivos:comprobar" onPress={async () => {
+            <Text bold>{vistaActual === 'identidad' ? '1. Certificados de esta PC' : '2. Dirección de esta PC'}</Text>
+            <Text dimColor>{vistaActual === 'identidad' ? 'Pegá las rutas de los archivos y guardá cada campo con Enter.' : 'Guardá cada campo con Enter. El firewall se configura por separado.'}</Text>
+            {(vistaActual === 'identidad' ? camposCertificado : camposRed).map(([id, label]) => (
+              <Input key={'dispositivo:config:' + id} label={label} value={config[id]} submitLabel="Guardar"
+                onSubmit={value => update($, configuracionDispositivos, f => ({ ...f, [id as keyof ConfiguracionDispositivos]: value }))} />
+            ))}
+            <Button key="dispositivos:paso" variant="primary" onPress={press => {
+              if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, vistaActual)
+            }}>Siguiente</Button>
+          </Box>
+        )}
+
+        {vistaActual === 'activar' && (
+          <Box flexDirection="column">
+            <Text bold>Habilitar el enlace</Text>
+            <Text dimColor>Esto prepara esta PC para la vinculación.</Text>
+            <Button key="dispositivos:activar" variant="primary" onPress={press => {
+              if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, 'activar')
+            }}>Habilitar y continuar</Button>
+          </Box>
+        )}
+
+        {vistaActual === 'agregar' && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>¿Cómo querés vincularte?</Text>
+            <Button key="dispositivos:invitar" onPress={press => {
+              if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, 'invitar')
+            }}>Iniciar receptor y crear invitación</Button>
+            <Button key="dispositivos:usar" onPress={() => cambiarVistaDispositivo($, 'destino')}>Tengo una invitación</Button>
+          </Box>
+        )}
+
+        {vistaActual === 'invitar' && (
+          <Box flexDirection="column">
+            <Text bold>Compartí estos datos con la otra PC</Text>
+            <Text>Dirección: {conexion?.direccion}:{conexion?.puerto}</Text>
+            <Text>Huella: {conexion?.huella}</Text>
+            <Text>Código: {codigo} · vence en 5 minutos</Text>
+            <Button key="dispositivos:ver-solicitudes" onPress={async () => {
               await refrescarSeguridad($)
-              await cambiarVistaDispositivo($, 'inicio')
-            }}>Volver y comprobar estado</Button>
+              await cambiarVistaDispositivo($, 'permisos')
+            }}>Ver solicitudes recibidas</Button>
+          </Box>
+        )}
+
+        {vistaActual === 'destino' && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Identificá la otra PC</Text>
+            <Text dimColor>Guardá cada campo con Enter.</Text>
+            {camposDestino.map(([id, label]) => (
+              <Input key={'dispositivo:destino:' + id} label={label} value={formulario[id]} submitLabel="Guardar"
+                onSubmit={value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false }))} />
+            ))}
+            <Button key="dispositivos:coincide-destino" plain onPress={() =>
+              update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
+              {formulario.coincide ? '☑' : '☐'} Comparé la huella con la otra PC
+            </Button>
+            <Button key="dispositivos:paso-destino" variant="primary" onPress={() => avanzarVinculacion($, 'destino')}>Siguiente</Button>
           </Box>
         )}
 
@@ -1475,18 +1567,20 @@ export const register: Register = on => {
 
         {(vistaActual === 'usar' || vistaActual === 'enviar') && (
           <Box flexDirection="column" gap={1}>
-            <Text bold>{vistaActual === 'usar' ? 'Usar una invitación' : 'Preparar un envío'}</Text>
+            <Text bold>{vistaActual === 'usar' ? 'Código de invitación' : 'Preparar un envío'}</Text>
             {!envio.length && <Text dimColor>Presioná Enter para guardar cada campo.</Text>}
             {!envio.length && (
               <Box flexDirection="column">
-                {camposDestino.map(([id, label]) => (
+                {vistaActual === 'enviar' && camposDestino.map(([id, label]) => (
                   <Input key={'dispositivo:destino:' + id} label={label} value={formulario[id]} submitLabel="Guardar"
                     onSubmit={value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false }))} />
                 ))}
-                <Button key="dispositivos:coincide-destino" plain onPress={() =>
-                  update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
-                  {formulario.coincide ? '☑' : '☐'} Comparé la huella con la otra PC
-                </Button>
+                {vistaActual === 'enviar' && (
+                  <Button key="dispositivos:coincide-destino" plain onPress={() =>
+                    update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
+                    {formulario.coincide ? '☑' : '☐'} Comparé la huella con la otra PC
+                  </Button>
+                )}
                 {vistaActual === 'usar' ? (
                   <Input key="dispositivo:codigo" label="Código temporal" value={formulario.codigo} submitLabel="Guardar"
                     onSubmit={value => update($, formularioDispositivo, f => ({ ...f, codigo: value }))} />

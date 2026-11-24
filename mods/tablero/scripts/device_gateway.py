@@ -149,7 +149,7 @@ class Gateway(HTTPServer):
         self.folder = folder
         self.ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-        self.ctx.load_cert_chain(cfg["cert"], cfg["key"])
+        self.ctx.load_cert_chain(cfg["cert"], cfg["key"], password=lambda: "")
         self.ctx.load_verify_locations(cfg["ca"])
         self.ctx.verify_mode = ssl.CERT_REQUIRED
         self.identity = fingerprint(certificate(cfg["cert"]))
@@ -175,7 +175,7 @@ class Gateway(HTTPServer):
             self.rates.clear()
         self.total = (minute, self.total[1] + 1)
         self.rates[ip] = self.rates.get(ip, 0) + 1 if self.total[1] <= 120 else self.rates.get(ip, 0)
-        if self.total[1] > 120 or self.rates[ip] > 20 or not any(ip in net for net in self.allowed):
+        if self.total[1] > 120 or self.rates[ip] > 20 or (str(ip) != self.server_address[0] and not any(ip in net for net in self.allowed)):
             sock.close()
             if self.total[1] <= 121:
                 with transaction(self.folder) as db:
@@ -244,9 +244,65 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(code)
 
     def do_GET(self):
+        peer = fingerprint(self.connection.getpeercert(binary_form=True))
+        if self.path == "/local-ready" and peer == self.server.identity and self.client_address[0] == self.server.server_address[0]:
+            return self.reply(204)
         with transaction(self.server.folder) as db:
             event(db, "route_rejected", fingerprint(self.connection.getpeercert(binary_form=True)))
         self.reply(405)
+
+
+def connection_settings(config):
+    address = ipaddress.IPv4Address(config["bind"])
+    port = config["port"]
+    if not any(address in ipaddress.ip_network(net)
+               for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")):
+        raise ValueError("Indicá una dirección IPv4 privada de esta PC.")
+    if type(port) is not int or not 1024 <= port <= 65535:
+        raise ValueError("Elegí un puerto de 1024 a 65535.")
+    allowed = config["allow"]
+    if not isinstance(allowed, list) or not allowed or len(allowed) > 20:
+        raise ValueError("Agregá entre una y veinte direcciones permitidas.")
+    for network in allowed:
+        ipaddress.ip_network(network, strict=False)
+    return str(address), port
+
+
+def check_identity(paths):
+    cert, key, ca = (Path(path.strip().strip('"')).expanduser() for path in paths)
+    if not all(path.is_absolute() and path.is_file() for path in (cert, key, ca)):
+        raise ValueError("Seleccioná las rutas absolutas de los tres archivos.")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    # Passing a callback prevents OpenSSL from prompting for a key password in the tool process.
+    try:
+        ctx.load_cert_chain(cert, key, password=lambda: "")
+        ctx.load_verify_locations(ca)
+    except (ssl.SSLError, OSError) as error:
+        raise ValueError("Revisá que el certificado coincida con la clave local y que la CA sea válida.") from error
+    return {"cert": str(cert), "key": str(key), "ca": str(ca)}
+
+
+def save_configuration(folder, args):
+    if not isinstance(args, list) or len(args) != 6 or not all(isinstance(value, str) for value in args):
+        raise ValueError("Faltan datos de configuración.")
+    bind, port, allow = args[3:]
+    config = {**check_identity(args[:3]), "bind": bind.strip(), "port": int(port),
+              "allow": [network.strip() for network in allow.split(",") if network.strip()]}
+    connection_settings(config)
+    with transaction(folder) as db:
+        db.execute("BEGIN IMMEDIATE")
+        if enabled(db):
+            raise ValueError("Desactivá el enlace para cambiar la configuración.")
+        target = folder / "gateway.json"
+        draft = folder / ("gateway-" + secrets.token_hex(8) + ".tmp")
+        fd = os.open(draft, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                json.dump(config, file)
+            os.replace(draft, target)
+        finally:
+            draft.unlink(missing_ok=True)
+    return {"ok": True}
 
 
 def connection_info(folder):
@@ -257,21 +313,53 @@ def connection_info(folder):
     except (OSError, ValueError):
         return {"estado": "invalida"}
     try:
-        address = ipaddress.IPv4Address(config["bind"])
-        port = config["port"]
-        if not any(address in ipaddress.ip_network(net)
-                   for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8")):
-            raise ValueError()
-        if type(port) is not int or not 1024 <= port <= 65535 or not config["allow"]:
-            raise ValueError()
-        for network in config["allow"]:
-            ipaddress.ip_network(network, strict=False)
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(config["cert"], config["key"])
-        context.load_verify_locations(config["ca"])
-        return {"estado": "configurada", "huella": fingerprint(certificate(config["cert"])), "puerto": port}
+        address, port = connection_settings(config)
+        check_identity([config["cert"], config["key"], config["ca"]])
+        return {"estado": "configurada", "huella": fingerprint(certificate(config["cert"])),
+                "puerto": port, "direccion": address}
     except (OSError, ValueError, TypeError, KeyError):
         return {"estado": "invalida"}
+
+
+def gateway_ready(cfg):
+    ctx = ssl.create_default_context(cafile=cfg["ca"])
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+    ctx.check_hostname = False
+    ctx.load_cert_chain(cfg["cert"], cfg["key"], password=lambda: "")
+    expected = fingerprint(certificate(cfg["cert"]))
+    connection = http.client.HTTPSConnection(cfg["bind"], cfg["port"], context=ctx, timeout=0.7)
+    try:
+        connection.connect()
+        if fingerprint(connection.sock.getpeercert(binary_form=True)) != expected:
+            return False
+        connection.request("GET", "/local-ready")
+        return connection.getresponse().status == 204
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
+
+
+def start_gateway(folder, cfg):
+    registry = folder / "gateway.json"
+    connection_settings(cfg)
+    with transaction(folder) as db:
+        if not enabled(db):
+            raise ValueError("Habilitá el enlace antes de iniciar el receptor.")
+    if gateway_ready(cfg):
+        return {"ready": True}
+    kwargs = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS}
+              if os.name == "nt" else {"start_new_session": True})
+    child = subprocess.Popen([sys.executable, "-I", str(Path(__file__).resolve()), str(registry.parent), "serve-active"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+    until = time.monotonic() + 5
+    while child.poll() is None and time.monotonic() < until:
+        if gateway_ready(cfg):
+            return {"ready": True}
+        time.sleep(0.15)
+    if child.poll() is None:
+        child.terminate()
+    raise ValueError("No se pudo iniciar el receptor. Revisá la IP y que el puerto esté libre.")
 
 
 def local(folder, action, args):
@@ -422,21 +510,36 @@ def local_events(folder):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("folder", type=Path)
-    parser.add_argument("action", choices=["serve", "send", "snapshot", "grant", "reject", "revoke", "audit", "local-events", "identity", "link", "invite"])
+    parser.add_argument("action", choices=["serve", "send", "snapshot", "grant", "reject", "revoke", "audit", "local-events", "identity", "link", "invite", "check-identity", "configure", "start-gateway", "serve-active"])
     parser.add_argument("args", nargs="*")
     opt = parser.parse_args()
     try:
-        if opt.action == "send" and not opt.args:
+        if opt.action in ("send", "check-identity", "configure") and not opt.args:
             opt.args = json.load(sys.stdin)
-        if opt.action == "local-events":
+        if opt.action == "check-identity":
+            check_identity(opt.args)
+            result = {"ok": True}
+        elif opt.action == "configure":
+            result = save_configuration(opt.folder, opt.args)
+        elif opt.action == "local-events":
             result = local_events(opt.folder)
-        elif opt.action in ("serve", "send", "identity"):
+        elif opt.action in ("serve", "serve-active", "start-gateway", "send", "identity"):
             cfg = json.loads((opt.folder / "gateway.json").read_text(encoding="utf-8"))
-            if opt.action == "serve":
+            if opt.action in ("serve", "serve-active"):
                 with Gateway(cfg, opt.folder) as gateway:
-                    gateway.serve_forever()
+                    if opt.action == "serve":
+                        gateway.serve_forever()
+                    else:
+                        gateway.timeout = 1
+                        while True:
+                            with transaction(opt.folder) as db:
+                                if not enabled(db):
+                                    break
+                            gateway.handle_request()
                 return
-            if opt.action == "identity":
+            if opt.action == "start-gateway":
+                result = start_gateway(opt.folder, cfg)
+            elif opt.action == "identity":
                 result = {"fingerprint": fingerprint(certificate(cfg["cert"]))}
             else:
                 with transaction(opt.folder) as db:
