@@ -1456,317 +1456,402 @@ export const register: Register = on => {
       </Box>
     )
 
+    const titulosDispositivos = {
+      identidad: 'Identidad de esta PC',
+      archivos: 'Usar certificados existentes',
+      'cert-solicitud': 'Solicitar un certificado',
+      'cert-firmar': 'Firmar un certificado',
+      red: 'Dirección de esta PC',
+      activar: 'Activar enlace',
+      agregar: 'Vincular otra PC',
+      invitar: 'Invitación creada',
+      destino: 'Identificá la otra PC',
+      usar: envio.length ? 'Vista previa' : 'Código de invitación',
+      enviar: envio.length ? 'Vista previa' : 'Preparar un envío',
+      permisos: 'Solicitudes y permisos',
+      actividad: 'Mensajes y alertas',
+    }
     const vistaDispositivos = tabActual === 'dispositivos' && (
       <Box flexDirection="column" gap={1}>
         {vistaActual !== 'inicio' && (
-          <Box flexDirection="row" gap={1}>
-            <Button key="dispositivos:volver" plain onPress={() => cambiarVistaDispositivo($, 'inicio')}>‹ Dispositivos</Button>
-            {pasoAnterior && (
+          <Box flexDirection="row" flexWrap="wrap" gap={1}>
+            {pasoAnterior ? (
               <Button key="dispositivos:atras" plain onPress={async () => {
                 await update($, vistaDispositivo, () => pasoAnterior)
                 await update($, envioDispositivo, () => [])
                 await update($, mensajeDispositivo, () => '')
-              }}>Paso anterior</Button>
+              }}>‹ Atrás</Button>
+            ) : (
+              <Button key="dispositivos:volver" plain onPress={() => cambiarVistaDispositivo($, 'inicio')}>‹ Dispositivos</Button>
             )}
           </Box>
         )}
-        {mensaje && <Text color={th.accent}>{mensaje}</Text>}
+        {mensaje && (
+          <Box borderStyle="round" borderColor={th.accent} paddingX={1}>
+            <Text>{mensaje}</Text>
+          </Box>
+        )}
         {vistaActual === 'inicio' && (
           <Box flexDirection="column" gap={1}>
-            <Button key="dispositivos:agregar" variant="primary" onPress={() => comenzarVinculacion($)}>＋ Agregar dispositivo</Button>
-            <Text dimColor>{configurada ? dispositivos?.enabled ? 'Enlace habilitado' : 'Enlace desactivado' : 'Primera conexión'}</Text>
-            <Box flexDirection="row" gap={1} flexWrap="wrap">
+            <Box flexDirection="column" borderStyle="round" borderColor={th.accent} paddingX={1} gap={1}>
+              <Box flexDirection="row" flexWrap="wrap" gap={1}>
+                <Text bold>Enlace privado</Text>
+                <Text color={configurada && dispositivos?.enabled ? th.ok : th.muted}>
+                  {configurada ? dispositivos?.enabled ? '● Enlace habilitado' : '○ Enlace desactivado' : '○ Primera conexión'}
+                </Text>
+              </Box>
+              <Box flexDirection="row" flexWrap="wrap" gap={1}>
+                <Button key="dispositivos:agregar" variant="primary" onPress={() => comenzarVinculacion($)}>Agregar dispositivo</Button>
+                {configurada && dispositivos?.enabled && (
+                  <Button key="dispositivos:nuevo-envio" plain onPress={() => cambiarVistaDispositivo($, 'enviar')}>Preparar un envío</Button>
+                )}
+              </Box>
+            </Box>
+            <Box flexDirection="column">
+              <Button key="dispositivos:permisos" plain onPress={() => cambiarVistaDispositivo($, 'permisos')}>
+                Solicitudes y permisos{dispositivos?.pending.length ? ' · ' + dispositivos.pending.length + ' pendientes' : ''}
+              </Button>
+              <Button key="dispositivos:actividad" plain onPress={() => cambiarVistaDispositivo($, 'actividad')}>
+                Mensajes y alertas{alertas.length ? ' · ' + alertas.length + ' alertas' : ''}
+              </Button>
+              {dispositivos?.puedeFirmar && (
+                <Button key="dispositivos:firmar-solicitud" plain onPress={() => abrirFirmaDispositivo($)}>Firmar certificado</Button>
+              )}
+            </Box>
+            <Box flexDirection="row" flexWrap="wrap" gap={1}>
               <Button key="dispositivos:actualizar" plain onPress={() => refrescarSeguridad($)}>Actualizar</Button>
               {dispositivos?.enabled && (
                 <Button key="dispositivos:enlace" plain onPress={() => operarDispositivo($, 'link', ['off'])}>Desactivar enlace</Button>
               )}
             </Box>
-            {configurada && dispositivos?.enabled && (
-              <Button key="dispositivos:nuevo-envio" onPress={() => cambiarVistaDispositivo($, 'enviar')}>Preparar un envío</Button>
-            )}
-            {dispositivos?.puedeFirmar && (
-              <Button key="dispositivos:firmar-solicitud" plain onPress={() => abrirFirmaDispositivo($)}>Firmar certificado de otra PC</Button>
-            )}
-            <Button key="dispositivos:permisos" onPress={() => cambiarVistaDispositivo($, 'permisos')}>
-              Solicitudes y permisos{dispositivos?.pending.length ? ' · ' + dispositivos.pending.length + ' pendientes' : ''}
-            </Button>
-            <Button key="dispositivos:actividad" onPress={() => cambiarVistaDispositivo($, 'actividad')}>
-              Mensajes y alertas{alertas.length ? ' · ' + alertas.length + ' alertas' : ''}
-            </Button>
           </Box>
         )}
 
-        {vistaActual === 'identidad' && (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>Identidad de esta PC</Text>
-            <Button key="dispositivos:crear-ca" onPress={press => {
-              if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'crear-autoridad')
-            }}>Es la primera PC · Crear red y certificado</Button>
-            <Button key="dispositivos:crear-solicitud" onPress={press => {
-              if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'crear-solicitud')
-            }}>Me sumo a otra PC · Generar clave y solicitud</Button>
-            <Button key="dispositivos:usar-archivos" plain onPress={() => cambiarVistaDispositivo($, 'archivos')}>Ya tengo certificados</Button>
-          </Box>
-        )}
-
-        {vistaActual === 'cert-solicitud' && (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>Enviá la solicitud a la PC que firma</Text>
-            <Text>Archivo para compartir: {datosCert.archivo}</Text>
-            <Text>Huella de la solicitud: {datosCert.huella}</Text>
-            <Text dimColor>La clave privada quedó guardada en esta PC.</Text>
-            <Input key="dispositivo:respuesta-certificado" label="Ruta del certificado que te devolvieron" value={datosCert.entrada} submitLabel="Guardar"
-              onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, entrada: value }))} />
-            <Input key="dispositivo:huella-ca" label="Huella de la CA confirmada con la otra PC" value={datosCert.huellaAutoridad} submitLabel="Guardar"
-              onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, huellaAutoridad: value }))} />
-            <Button key="dispositivos:importar-certificado" variant="primary" onPress={press => {
-              if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'importar')
-            }}>Importar certificado y continuar</Button>
-          </Box>
-        )}
-
-        {vistaActual === 'cert-firmar' && (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>Firmar certificado de otra PC</Text>
-            {datosCert.huellaAutoridad ? (
-              <Box flexDirection="column">
-                <Text>Compartí este archivo: {datosCert.archivo}</Text>
-                <Text>Confirmá por otro canal la huella de tu CA: {datosCert.huellaAutoridad}</Text>
+        {vistaActual !== 'inicio' && (
+          <Box flexDirection="column" gap={1} borderStyle="round" borderColor={th.accent} paddingX={1}>
+            <Text bold color={th.accent}>{titulosDispositivos[vistaActual]}</Text>
+            {vistaActual === 'identidad' && (
+              <Box flexDirection="column" gap={1}>
+                <Box flexDirection="column">
+                  <Button key="dispositivos:crear-ca" onPress={press => {
+                    if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'crear-autoridad')
+                  }}>Crear red privada</Button>
+                  <Text dimColor>Para la primera PC.</Text>
+                </Box>
+                <Box flexDirection="column">
+                  <Button key="dispositivos:crear-solicitud" onPress={press => {
+                    if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'crear-solicitud')
+                  }}>Unirme a una red</Button>
+                  <Text dimColor>Genera la clave y la solicitud de esta PC.</Text>
+                </Box>
+                <Button key="dispositivos:usar-archivos" plain onPress={() => cambiarVistaDispositivo($, 'archivos')}>Ya tengo certificados</Button>
               </Box>
-            ) : (
-              <Box flexDirection="column">
-                <Input key="dispositivo:archivo-csr" label="Ruta del archivo .csr recibido" value={datosCert.entrada} submitLabel="Guardar"
-                  onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, entrada: value, huella: '', confirmada: false }))} />
-                {datosCert.huella ? (
+            )}
+
+            {vistaActual === 'cert-solicitud' && (
+              <Box flexDirection="column" gap={1}>
+                <Box flexDirection="column">
+                  <Text dimColor>Compartí este archivo con la PC que firma.</Text>
+                  <Text>{datosCert.archivo}</Text>
+                </Box>
+                <Box flexDirection="column">
+                  <Text dimColor>Huella de la solicitud</Text>
+                  <Text>{datosCert.huella}</Text>
+                </Box>
+                <Box flexDirection="column">
+                  <Text dimColor>Ruta del certificado que te devolvieron</Text>
+                  <Input key="dispositivo:respuesta-certificado" value={datosCert.entrada} submitLabel="Guardar"
+                    onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, entrada: value }))} />
+                </Box>
+                <Box flexDirection="column">
+                  <Text dimColor>Huella de la CA confirmada con la otra PC</Text>
+                  <Input key="dispositivo:huella-ca" value={datosCert.huellaAutoridad} submitLabel="Guardar"
+                    onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, huellaAutoridad: value }))} />
+                </Box>
+                <Button key="dispositivos:importar-certificado" variant="primary" onPress={press => {
+                  if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'importar')
+                }}>Importar certificado y continuar</Button>
+              </Box>
+            )}
+
+            {vistaActual === 'cert-firmar' && (
+              <Box flexDirection="column" gap={1}>
+                {datosCert.huellaAutoridad ? (
                   <Box flexDirection="column">
-                    <Text>Huella de la solicitud: {datosCert.huella}</Text>
-                    <Button key="dispositivos:confirmar-csr" plain onPress={() => update($, certificadosDispositivos, f => ({ ...f, confirmada: !f.confirmada }))}>
-                      {datosCert.confirmada ? '☑' : '☐'} Confirmé la huella con la otra PC
-                    </Button>
-                    {datosCert.confirmada && (
-                      <Button key="dispositivos:firmar-certificado" variant="primary" onPress={press => {
-                        if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'firmar')
-                      }}>Firmar y generar archivo</Button>
+                    <Text dimColor>Archivo para entregar a la otra PC</Text>
+                    <Text>{datosCert.archivo}</Text>
+                    <Text dimColor>Huella de tu CA · confirmala por separado</Text>
+                    <Text>{datosCert.huellaAutoridad}</Text>
+                  </Box>
+                ) : (
+                  <Box flexDirection="column">
+                    <Box flexDirection="column">
+                      <Text dimColor>Ruta del archivo .csr recibido</Text>
+                      <Input key="dispositivo:archivo-csr" value={datosCert.entrada} submitLabel="Guardar"
+                        onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, entrada: value, huella: '', confirmada: false }))} />
+                    </Box>
+                    {datosCert.huella ? (
+                      <Box flexDirection="column">
+                        <Text dimColor>Compará la huella con la otra PC</Text>
+                        <Text>{datosCert.huella}</Text>
+                        <Button key="dispositivos:confirmar-csr" plain onPress={() => update($, certificadosDispositivos, f => ({ ...f, confirmada: !f.confirmada }))}>
+                          {datosCert.confirmada ? '☑' : '☐'} Confirmé la huella con la otra PC
+                        </Button>
+                        {datosCert.confirmada && (
+                          <Button key="dispositivos:firmar-certificado" variant="primary" onPress={press => {
+                            if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'firmar')
+                          }}>Firmar y generar archivo</Button>
+                        )}
+                      </Box>
+                    ) : (
+                      <Button key="dispositivos:revisar-csr" onPress={() => operarCertificados($, 'leer-solicitud')}>Ver huella de la solicitud</Button>
                     )}
                   </Box>
-                ) : (
-                  <Button key="dispositivos:revisar-csr" onPress={() => operarCertificados($, 'leer-solicitud')}>Ver huella de la solicitud</Button>
                 )}
               </Box>
             )}
-          </Box>
-        )}
 
-        {(vistaActual === 'archivos' || vistaActual === 'red') && (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>{vistaActual === 'archivos' ? 'Certificados existentes' : '2. Dirección de esta PC'}</Text>
-            <Text dimColor>{vistaActual === 'archivos' ? 'Pegá las rutas de los archivos y guardá cada campo con Enter.' : 'Guardá cada campo con Enter. El firewall se configura por separado.'}</Text>
-            {(vistaActual === 'archivos' ? camposCertificado : camposRed).map(([id, label]) => (
-              <Input key={'dispositivo:config:' + id} label={label} value={config[id]} submitLabel="Guardar"
-                onSubmit={value => update($, configuracionDispositivos, f => ({ ...f, [id as keyof ConfiguracionDispositivos]: value }))} />
-            ))}
-            <Button key="dispositivos:paso" variant="primary" onPress={press => {
-              if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, vistaActual === 'archivos' ? 'identidad' : 'red')
-            }}>Siguiente</Button>
-          </Box>
-        )}
-
-        {vistaActual === 'activar' && (
-          <Box flexDirection="column">
-            <Text bold>Habilitar el enlace</Text>
-            <Text dimColor>Esto prepara esta PC para la vinculación.</Text>
-            <Button key="dispositivos:activar" variant="primary" onPress={press => {
-              if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, 'activar')
-            }}>Habilitar y continuar</Button>
-          </Box>
-        )}
-
-        {vistaActual === 'agregar' && (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>¿Cómo querés vincularte?</Text>
-            <Button key="dispositivos:invitar" onPress={press => {
-              if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, 'invitar')
-            }}>Iniciar receptor y crear invitación</Button>
-            <Button key="dispositivos:usar" onPress={() => cambiarVistaDispositivo($, 'destino')}>Tengo una invitación</Button>
-          </Box>
-        )}
-
-        {vistaActual === 'invitar' && (
-          <Box flexDirection="column">
-            <Text bold>Compartí estos datos con la otra PC</Text>
-            <Text>Dirección: {conexion?.direccion}:{conexion?.puerto}</Text>
-            <Text>Huella: {conexion?.huella}</Text>
-            <Text>Código: {codigo} · vence en 5 minutos</Text>
-            <Button key="dispositivos:ver-solicitudes" onPress={async () => {
-              await refrescarSeguridad($)
-              await cambiarVistaDispositivo($, 'permisos')
-            }}>Ver solicitudes recibidas</Button>
-          </Box>
-        )}
-
-        {vistaActual === 'destino' && (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>Identificá la otra PC</Text>
-            <Text dimColor>Guardá cada campo con Enter.</Text>
-            {camposDestino.map(([id, label]) => (
-              <Input key={'dispositivo:destino:' + id} label={label} value={formulario[id]} submitLabel="Guardar"
-                onSubmit={value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false }))} />
-            ))}
-            <Button key="dispositivos:coincide-destino" plain onPress={() =>
-              update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
-              {formulario.coincide ? '☑' : '☐'} Comparé la huella con la otra PC
-            </Button>
-            <Button key="dispositivos:paso-destino" variant="primary" onPress={() => avanzarVinculacion($, 'destino')}>Siguiente</Button>
-          </Box>
-        )}
-
-        {vistaActual === 'permisos' && (
-          <Box flexDirection="column" gap={1}>
-            <Box flexDirection="column">
-              <Text bold>Solicitudes pendientes</Text>
-              {!dispositivos?.pending.length && <Text dimColor>No hay solicitudes pendientes.</Text>}
-              {dispositivos?.pending.map(([peer]) => (
-                <Box key={peer} flexDirection="column">
-                  <Text>Huella: {peer}</Text>
-                  <Box flexDirection="row" gap={1} flexWrap="wrap">
-                    <Button key={'dispositivos:revisar:' + peer} onPress={async () => {
-                      await update($, peerDispositivo, () => peer)
-                      await update($, formularioDispositivo, current => ({ ...current, coincide: false }))
-                    }}>Revisar solicitud</Button>
-                    <Button key={'dispositivos:rechazar:' + peer} plain onPress={() => operarDispositivo($, 'reject', [peer])}>Rechazar</Button>
-                  </Box>
-                </Box>
-              ))}
-            </Box>
-            {peerElegido && dispositivos?.pending.some(([peer]) => peer === peerElegido) && (
+            {(vistaActual === 'archivos' || vistaActual === 'red') && (
               <Box flexDirection="column" gap={1}>
-                <Text bold>Permiso temporal</Text>
-                <Text dimColor>Presioná Enter para guardar cada campo.</Text>
-                <Text>Compará esta huella con la pantalla de la otra PC: {peerElegido}</Text>
-                <Button key="dispositivos:comparada" plain onPress={() => update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
-                  {formulario.coincide ? '☑' : '☐'} La huella coincide
-                </Button>
-                <Input key="dispositivo:permiso-proyecto" label="Identificador del proyecto" value={formulario.proyecto}
-                  onSubmit={value => update($, formularioDispositivo, f => ({ ...f, proyecto: value }))} />
-                <Input key="dispositivo:permiso-minutos" label="Duración en minutos" value={formulario.minutos}
-                  onSubmit={value => update($, formularioDispositivo, f => ({ ...f, minutos: value }))} />
-                {bloques.map(([id, nombre]) => (
-                  <Button key={'dispositivo:permiso:' + id} plain onPress={() => update($, formularioDispositivo, f => ({ ...f, bloque: id }))}>
-                    {formulario.bloque === id ? '●' : '○'} {nombre} · {id === 'work_request' ? 'Trabajo' : 'Lectura'}
-                  </Button>
+                {vistaActual === 'red' && <Text dimColor>El firewall se configura por separado.</Text>}
+                {(vistaActual === 'archivos' ? camposCertificado : camposRed).map(([id, label]) => (
+                  <Box key={id} flexDirection="column">
+                    <Text dimColor>{label}</Text>
+                    <Input key={'dispositivo:config:' + id} value={config[id]} submitLabel="Guardar"
+                      onSubmit={value => update($, configuracionDispositivos, f => ({ ...f, [id as keyof ConfiguracionDispositivos]: value }))} />
+                  </Box>
                 ))}
-                <Button key="dispositivo:autorizar" variant="primary" onPress={press => { if (press.surface === 'terminal' || press.surface === 'desktop') return aprobarDispositivo($, peerElegido) }}>
-                  Autorizar este permiso
-                </Button>
+                <Button key="dispositivos:paso" variant="primary" onPress={press => {
+                  if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, vistaActual === 'archivos' ? 'identidad' : 'red')
+                }}>Siguiente</Button>
               </Box>
             )}
-            <Box flexDirection="column">
-              <Text bold>Permisos vigentes</Text>
-              {!dispositivos?.grants.length && <Text dimColor>No hay permisos vigentes.</Text>}
-              {dispositivos?.grants.map(([peer, project, kind, mode, until]) => (
-                <Text key={peer + ':' + project + ':' + kind}>
-                  {project} · {BLOQUES[kind as keyof typeof BLOQUES] ?? kind} · {mode === 'work' ? 'Trabajo' : 'Lectura'}
-                  {' '}· {peer.slice(0, 12)} · vence {hhmm(until * 1000)}
-                </Text>
-              ))}
-              {[...new Set(dispositivos?.grants.map(([peer]) => peer))].map(peer => (
-                <Button key={'dispositivos:revocar:' + peer} plain onPress={() => operarDispositivo($, 'revoke', [peer])}>
-                  Revocar permisos de {peer.slice(0, 12)}
-                </Button>
-              ))}
-            </Box>
-          </Box>
-        )}
 
-        {(vistaActual === 'usar' || vistaActual === 'enviar') && (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>{vistaActual === 'usar' ? 'Código de invitación' : 'Preparar un envío'}</Text>
-            {!envio.length && <Text dimColor>Presioná Enter para guardar cada campo.</Text>}
-            {!envio.length && (
+            {vistaActual === 'activar' && (
               <Box flexDirection="column">
-                {vistaActual === 'enviar' && camposDestino.map(([id, label]) => (
-                  <Input key={'dispositivo:destino:' + id} label={label} value={formulario[id]} submitLabel="Guardar"
-                    onSubmit={value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false }))} />
+                <Text dimColor>Habilitá esta PC para vincularla.</Text>
+                <Button key="dispositivos:activar" variant="primary" onPress={press => {
+                  if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, 'activar')
+                }}>Habilitar y continuar</Button>
+              </Box>
+            )}
+
+            {vistaActual === 'agregar' && (
+              <Box flexDirection="column" gap={1}>
+                <Box flexDirection="column">
+                  <Button key="dispositivos:invitar" onPress={press => {
+                    if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, 'invitar')
+                  }}>Crear invitación</Button>
+                  <Text dimColor>Esta PC recibe la solicitud.</Text>
+                </Box>
+                <Button key="dispositivos:usar" onPress={() => cambiarVistaDispositivo($, 'destino')}>Tengo una invitación</Button>
+              </Box>
+            )}
+
+            {vistaActual === 'invitar' && (
+              <Box flexDirection="column">
+                <Text dimColor>Dirección</Text>
+                <Text>{conexion?.direccion}:{conexion?.puerto}</Text>
+                <Text dimColor>Huella</Text>
+                <Text>{conexion?.huella}</Text>
+                <Text dimColor>Código · vence en 5 minutos</Text>
+                <Text bold>{codigo}</Text>
+                <Button key="dispositivos:ver-solicitudes" onPress={async () => {
+                  await refrescarSeguridad($)
+                  await cambiarVistaDispositivo($, 'permisos')
+                }}>Ver solicitudes recibidas</Button>
+              </Box>
+            )}
+
+            {vistaActual === 'destino' && (
+              <Box flexDirection="column" gap={1}>
+                {camposDestino.map(([id, label]) => (
+                  <Box key={id} flexDirection="column">
+                    <Text dimColor>{label}</Text>
+                    <Input key={'dispositivo:destino:' + id} value={formulario[id]} submitLabel="Guardar"
+                      onSubmit={value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false }))} />
+                  </Box>
                 ))}
-                {vistaActual === 'enviar' && (
-                  <Button key="dispositivos:coincide-destino" plain onPress={() =>
-                    update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
-                    {formulario.coincide ? '☑' : '☐'} Comparé la huella con la otra PC
-                  </Button>
-                )}
-                {vistaActual === 'usar' ? (
-                  <Input key="dispositivo:codigo" label="Código temporal" value={formulario.codigo} submitLabel="Guardar"
-                    onSubmit={value => update($, formularioDispositivo, f => ({ ...f, codigo: value }))} />
-                ) : (
-                  <Box flexDirection="column">
-                    <Input key="dispositivo:proyecto" label="Identificador del proyecto" value={formulario.proyecto} submitLabel="Guardar"
-                      onSubmit={value => update($, formularioDispositivo, f => ({ ...f, proyecto: value }))} />
+                <Button key="dispositivos:coincide-destino" plain onPress={() =>
+                  update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
+                  {formulario.coincide ? '☑' : '☐'} Comparé la huella con la otra PC
+                </Button>
+                <Button key="dispositivos:paso-destino" variant="primary" onPress={() => avanzarVinculacion($, 'destino')}>Siguiente</Button>
+              </Box>
+            )}
+
+            {vistaActual === 'permisos' && (
+              <Box flexDirection="column" gap={1}>
+                <Box flexDirection="column">
+                  <Text bold>Solicitudes pendientes</Text>
+                  {!dispositivos?.pending.length && <Text dimColor>No hay solicitudes pendientes.</Text>}
+                  {dispositivos?.pending.map(([peer]) => (
+                    <Box key={peer} flexDirection="column">
+                      <Text>Huella: {peer}</Text>
+                      <Box flexDirection="row" gap={1} flexWrap="wrap">
+                        <Button key={'dispositivos:revisar:' + peer} onPress={async () => {
+                          await update($, peerDispositivo, () => peer)
+                          await update($, formularioDispositivo, current => ({ ...current, coincide: false }))
+                        }}>Revisar solicitud</Button>
+                        <Button key={'dispositivos:rechazar:' + peer} plain onPress={() => operarDispositivo($, 'reject', [peer])}>Rechazar</Button>
+                      </Box>
+                    </Box>
+                  ))}
+                </Box>
+                {peerElegido && dispositivos?.pending.some(([peer]) => peer === peerElegido) && (
+                  <Box flexDirection="column" gap={1}>
+                    <Text bold>Permiso temporal</Text>
+                    <Text dimColor>Compará la huella con la otra PC.</Text>
+                    <Text>{peerElegido}</Text>
+                    <Button key="dispositivos:comparada" plain onPress={() => update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
+                      {formulario.coincide ? '☑' : '☐'} La huella coincide
+                    </Button>
+                    <Box flexDirection="column">
+                      <Text dimColor>Identificador del proyecto</Text>
+                      <Input key="dispositivo:permiso-proyecto" value={formulario.proyecto}
+                        onSubmit={value => update($, formularioDispositivo, f => ({ ...f, proyecto: value }))} />
+                    </Box>
+                    <Box flexDirection="column">
+                      <Text dimColor>Duración en minutos</Text>
+                      <Input key="dispositivo:permiso-minutos" value={formulario.minutos}
+                        onSubmit={value => update($, formularioDispositivo, f => ({ ...f, minutos: value }))} />
+                    </Box>
                     {bloques.map(([id, nombre]) => (
-                      <Button key={'dispositivo:bloque:' + id} plain onPress={() =>
-                        update($, formularioDispositivo, f => ({ ...f, bloque: id, valor: '', revision: '' }))}>
-                        {formulario.bloque === id ? '●' : '○'} {nombre}
+                      <Button key={'dispositivo:permiso:' + id} plain onPress={() => update($, formularioDispositivo, f => ({ ...f, bloque: id }))}>
+                        {formulario.bloque === id ? '●' : '○'} {nombre} · {id === 'work_request' ? 'Trabajo' : 'Lectura'}
                       </Button>
                     ))}
-                    {formulario.bloque === 'test_result' ? (
+                    <Button key="dispositivo:autorizar" variant="primary" onPress={press => { if (press.surface === 'terminal' || press.surface === 'desktop') return aprobarDispositivo($, peerElegido) }}>
+                      Autorizar este permiso
+                    </Button>
+                  </Box>
+                )}
+                <Box flexDirection="column">
+                  <Text bold>Permisos vigentes</Text>
+                  {!dispositivos?.grants.length && <Text dimColor>No hay permisos vigentes.</Text>}
+                  {dispositivos?.grants.map(([peer, project, kind, mode, until]) => (
+                    <Text key={peer + ':' + project + ':' + kind}>
+                      {project} · {BLOQUES[kind as keyof typeof BLOQUES] ?? kind} · {mode === 'work' ? 'Trabajo' : 'Lectura'}
+                      {' '}· {peer.slice(0, 12)} · vence {hhmm(until * 1000)}
+                    </Text>
+                  ))}
+                  {[...new Set(dispositivos?.grants.map(([peer]) => peer))].map(peer => (
+                    <Button key={'dispositivos:revocar:' + peer} plain onPress={() => operarDispositivo($, 'revoke', [peer])}>
+                      Revocar permisos de {peer.slice(0, 12)}
+                    </Button>
+                  ))}
+                </Box>
+              </Box>
+            )}
+
+            {(vistaActual === 'usar' || vistaActual === 'enviar') && (
+              <Box flexDirection="column" gap={1}>
+                {!envio.length && (
+                  <Box flexDirection="column">
+                    {vistaActual === 'enviar' && camposDestino.map(([id, label]) => (
+                      <Box key={id} flexDirection="column">
+                        <Text dimColor>{label}</Text>
+                        <Input key={'dispositivo:destino:' + id} value={formulario[id]} submitLabel="Guardar"
+                          onSubmit={value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false }))} />
+                      </Box>
+                    ))}
+                    {vistaActual === 'enviar' && (
+                      <Button key="dispositivos:coincide-destino" plain onPress={() =>
+                        update($, formularioDispositivo, f => ({ ...f, coincide: !f.coincide }))}>
+                        {formulario.coincide ? '☑' : '☐'} Comparé la huella con la otra PC
+                      </Button>
+                    )}
+                    {vistaActual === 'usar' ? (
                       <Box flexDirection="column">
-                        <Input key="dispositivo:aprobadas" label="Pruebas aprobadas" value={formulario.valor} submitLabel="Guardar"
-                          onSubmit={value => update($, formularioDispositivo, f => ({ ...f, valor: value }))} />
-                        <Input key="dispositivo:fallidas" label="Pruebas fallidas" value={formulario.revision} submitLabel="Guardar"
-                          onSubmit={value => update($, formularioDispositivo, f => ({ ...f, revision: value }))} />
+                        <Text dimColor>Código temporal</Text>
+                        <Input key="dispositivo:codigo" value={formulario.codigo} submitLabel="Guardar"
+                          onSubmit={value => update($, formularioDispositivo, f => ({ ...f, codigo: value }))} />
                       </Box>
                     ) : (
                       <Box flexDirection="column">
-                        {(formulario.bloque === 'status' ?
-                          [['queued', 'En cola'], ['running', 'En curso'], ['finished', 'Terminado'], ['blocked', 'Bloqueado']] :
-                          [['review', 'Revisar código'], ['test', 'Ejecutar pruebas'], ['develop', 'Implementar']]).map(([id, label]) => (
-                          <Button key={'dispositivo:valor:' + id} plain onPress={() =>
-                            update($, formularioDispositivo, f => ({ ...f, valor: id ?? '' }))}>
-                            {formulario.valor === id ? '●' : '○'} {label}
+                        <Box flexDirection="column">
+                          <Text dimColor>Identificador del proyecto</Text>
+                          <Input key="dispositivo:proyecto" value={formulario.proyecto} submitLabel="Guardar"
+                            onSubmit={value => update($, formularioDispositivo, f => ({ ...f, proyecto: value }))} />
+                        </Box>
+                        {bloques.map(([id, nombre]) => (
+                          <Button key={'dispositivo:bloque:' + id} plain onPress={() =>
+                            update($, formularioDispositivo, f => ({ ...f, bloque: id, valor: '', revision: '' }))}>
+                            {formulario.bloque === id ? '●' : '○'} {nombre}
                           </Button>
                         ))}
-                        {formulario.bloque === 'work_request' && (
-                          <Input key="dispositivo:revision" label="Commit completo" value={formulario.revision} submitLabel="Guardar"
-                            onSubmit={value => update($, formularioDispositivo, f => ({ ...f, revision: value }))} />
+                        {formulario.bloque === 'test_result' ? (
+                          <Box flexDirection="column">
+                            <Box flexDirection="column">
+                              <Text dimColor>Pruebas aprobadas</Text>
+                              <Input key="dispositivo:aprobadas" value={formulario.valor} submitLabel="Guardar"
+                                onSubmit={value => update($, formularioDispositivo, f => ({ ...f, valor: value }))} />
+                            </Box>
+                            <Box flexDirection="column">
+                              <Text dimColor>Pruebas fallidas</Text>
+                              <Input key="dispositivo:fallidas" value={formulario.revision} submitLabel="Guardar"
+                                onSubmit={value => update($, formularioDispositivo, f => ({ ...f, revision: value }))} />
+                            </Box>
+                          </Box>
+                        ) : (
+                          <Box flexDirection="column">
+                            {(formulario.bloque === 'status' ?
+                              [['queued', 'En cola'], ['running', 'En curso'], ['finished', 'Terminado'], ['blocked', 'Bloqueado']] :
+                              [['review', 'Revisar código'], ['test', 'Ejecutar pruebas'], ['develop', 'Implementar']]).map(([id, label]) => (
+                              <Button key={'dispositivo:valor:' + id} plain onPress={() =>
+                                update($, formularioDispositivo, f => ({ ...f, valor: id ?? '' }))}>
+                                {formulario.valor === id ? '●' : '○'} {label}
+                              </Button>
+                            ))}
+                            {formulario.bloque === 'work_request' && (
+                              <Box flexDirection="column">
+                                <Text dimColor>Commit completo</Text>
+                                <Input key="dispositivo:revision" value={formulario.revision} submitLabel="Guardar"
+                                  onSubmit={value => update($, formularioDispositivo, f => ({ ...f, revision: value }))} />
+                              </Box>
+                            )}
+                          </Box>
                         )}
                       </Box>
                     )}
+                    <Button key="dispositivos:previa" onPress={() => plantearEnvioDispositivo($, vistaActual === 'usar')}>Ver antes de enviar</Button>
                   </Box>
                 )}
-                <Button key="dispositivos:previa" onPress={() => plantearEnvioDispositivo($, vistaActual === 'usar')}>Ver antes de enviar</Button>
+                {!!envio.length && (
+                  <Box flexDirection="column">
+                    <Text dimColor>Destino: {envio[0]}:{envio[1]}</Text>
+                    <Text dimColor>Huella</Text>
+                    <Text>{envio[2]}</Text>
+                    {envio[4] !== 'pair' && <Text>Proyecto: {envio[3]}</Text>}
+                    <Text>{describirBloque(envio[4] ?? '', envio[5] ?? '')}</Text>
+                    <Button key="dispositivos:enviar" variant="primary" onPress={press => { if (press.surface === 'terminal' || press.surface === 'desktop') return operarDispositivo($, 'send', envio) }}>Enviar</Button>
+                    <Button key="dispositivos:cancelar" plain onPress={() => update($, envioDispositivo, () => [])}>Volver a editar</Button>
+                  </Box>
+                )}
               </Box>
             )}
-            {!!envio.length && (
-              <Box flexDirection="column">
-                <Text bold>Vista previa</Text>
-                <Text>Destino: {envio[0]}:{envio[1]} · huella {envio[2]}</Text>
-                {envio[4] !== 'pair' && <Text>Proyecto: {envio[3]}</Text>}
-                <Text>{describirBloque(envio[4] ?? '', envio[5] ?? '')}</Text>
-                <Button key="dispositivos:enviar" variant="primary" onPress={press => { if (press.surface === 'terminal' || press.surface === 'desktop') return operarDispositivo($, 'send', envio) }}>Enviar</Button>
-                <Button key="dispositivos:cancelar" plain onPress={() => update($, envioDispositivo, () => [])}>Volver a editar</Button>
-              </Box>
-            )}
-          </Box>
-        )}
 
-        {vistaActual === 'actividad' && (
-          <Box flexDirection="column" gap={1}>
-            <Box flexDirection="column">
-              <Text bold>Mensajes recibidos</Text>
-              {!dispositivos?.inbox.length && <Text dimColor>Todavía no recibiste mensajes.</Text>}
-              {dispositivos?.inbox.map(([project, kind, data]) => (
-                <Text>{project} · {BLOQUES[kind as keyof typeof BLOQUES] ?? kind} · {describirBloque(kind, data)}</Text>
-              ))}
-            </Box>
-            <Box flexDirection="column">
-              <Text bold>Alertas de las últimas 24 horas</Text>
-              {!alertas.length && <Text dimColor>No hay alertas visibles.</Text>}
-              {alertas.map(([rule, peer, total, at]) => (
-                <Text key={rule + peer} color={th.warn}>
-                  {ALERTAS[rule] ?? rule} · {peer.length === 64 ? peer.slice(0, 12) : peer}
-                  {' '}· {total} {total === 1 ? 'evento' : 'eventos'} · {hhmm(at * 1000)}
-                </Text>
-              ))}
-            </Box>
+            {vistaActual === 'actividad' && (
+              <Box flexDirection="column" gap={1}>
+                <Box flexDirection="column">
+                  <Text bold>Mensajes recibidos</Text>
+                  {!dispositivos?.inbox.length && <Text dimColor>Todavía no recibiste mensajes.</Text>}
+                  {dispositivos?.inbox.map(([project, kind, data]) => (
+                    <Text>{project} · {BLOQUES[kind as keyof typeof BLOQUES] ?? kind} · {describirBloque(kind, data)}</Text>
+                  ))}
+                </Box>
+                <Box flexDirection="column">
+                  <Text bold>Alertas de las últimas 24 horas</Text>
+                  {!alertas.length && <Text dimColor>No hay alertas visibles.</Text>}
+                  {alertas.map(([rule, peer, total, at]) => (
+                    <Text key={rule + peer} color={th.warn}>
+                      {ALERTAS[rule] ?? rule} · {peer.length === 64 ? peer.slice(0, 12) : peer}
+                      {' '}· {total} {total === 1 ? 'evento' : 'eventos'} · {hhmm(at * 1000)}
+                    </Text>
+                  ))}
+                </Box>
+              </Box>
+            )}
           </Box>
         )}
       </Box>

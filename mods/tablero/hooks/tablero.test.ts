@@ -339,7 +339,7 @@ test('Dispositivos explica el estado y prepara un envío antes de confirmarlo', 
   })
   const ui = await $.ui.mount({
     plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
-    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 42, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
   })
   await ui.press({ key: 'tab:dispositivos' })
   expect(await ui.find({ text: /Enlace habilitado/ })).toBeDefined()
@@ -374,7 +374,7 @@ test('Agregar dispositivo desbloquea red solo después de validar los certificad
   })
   const ui = await $.ui.mount({
     plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
-    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 42, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
   })
   await ui.press({ key: 'tab:dispositivos' })
   expect(await ui.find({ text: /Agregar dispositivo/ })).toBeDefined()
@@ -386,6 +386,10 @@ test('Agregar dispositivo desbloquea red solo después de validar los certificad
   await ui.press({ key: 'dispositivos:usar-archivos' })
   expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeDefined()
   expect(await ui.find({ key: 'dispositivo:config:ip' })).toBeUndefined()
+  await ui.press({ key: 'dispositivos:atras' })
+  expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeUndefined()
+  expect(await ui.find({ text: 'Identidad de esta PC' })).toBeDefined()
+  await ui.press({ key: 'dispositivos:usar-archivos' })
   await ui.press({ key: 'dispositivos:paso' })
   expect(await ui.find({ text: /Completá los tres archivos/ })).toBeDefined()
   expect(calls).not.toContain('check-identity')
