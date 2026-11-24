@@ -457,11 +457,10 @@ async function resolverAviso($: EngineInterface, instalar: boolean) {
   }
 }
 
-async function alternarAvisos($: EngineInterface) {
-  const activo = await read($, avisosHerramientas)
-  await update($, avisosHerramientas, () => !activo)
-  try { await $.store.set('avisosHerramientas', !activo) } catch {}
-  if (activo) await resolverAviso($, false)
+async function configurarAvisos($: EngineInterface, activo: boolean) {
+  await update($, avisosHerramientas, () => activo)
+  try { await $.store.set('avisosHerramientas', activo) } catch {}
+  if (!activo) await resolverAviso($, false)
 }
 
 // ---------------------------------------------------------------- hooks
@@ -1130,7 +1129,7 @@ export const register: Register = on => {
               <Button key="compacto" plain onPress={() => setLook($, l => ({ ...l, compacto: !l.compacto }))}>
                 {lk.compacto ? '☑' : '☐'} compacto
               </Button>
-              <Button key="herramientas:avisos" plain onPress={() => alternarAvisos($)}>
+              <Button key="herramientas:avisos" plain onPress={() => configurarAvisos($, !avisos)}>
                 {avisos ? '☑' : '☐'} Avisos de herramientas
               </Button>
             </Box>
@@ -1235,8 +1234,8 @@ export const register: Register = on => {
                 {solicitud.herramientas.some(h => !excluidas.includes(h.gestor + ':' + h.paquete)) && (
                   <Button key="herramientas:instalar" variant="primary" onPress={() => resolverAviso($, true)}>Instalar seleccionadas</Button>
                 )}
-                <Button key="herramientas:omitir" onPress={() => resolverAviso($, false)}>Seguir sin instalar</Button>
-                <Button key="herramientas:silenciar" plain onPress={() => alternarAvisos($)}>Desactivar avisos</Button>
+                <Button key="herramientas:omitir" onPress={() => resolverAviso($, false)}>Seguir sin instalar esta vez</Button>
+                <Button key="herramientas:silenciar" plain onPress={() => configurarAvisos($, false)}>Continuar sin preguntar</Button>
               </Box>
             )}
             {solicitud.estado === 'instalando' && <Text dimColor>Instalación en curso…</Text>}

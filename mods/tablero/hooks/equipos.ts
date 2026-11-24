@@ -219,7 +219,7 @@ export class Equipos {
 export function promptTarea(t: Tarea, evidencia: string) {
   const especialidad = {
     preparacion: 'Traza el comportamiento y prepara evidencia o casos desde el contrato. El directorio puede estar cambiando: para la versión anterior consulta el commit acordado. Registra comandos realmente ejecutados.',
-    implementacion: 'Eres el único escritor de las rutas asignadas. Usa las pruebas existentes y la evidencia previa. Sigue ub-mode, con prueba roja y verde cuando sea practicable. Reporta los comandos y sus resultados.',
+    implementacion: 'Eres el único escritor de las rutas asignadas. Usa las pruebas existentes y la evidencia previa. Sigue ub-mode, con prueba roja y verde cuando sea practicable. Reporta los comandos y sus resultados. Si necesitas archivos temporales de TDD, usa .tdd/ cuando el orquestador haya confirmado que Git la ignora.',
     verificacion: t.simulacionPHP
       ? 'Traza el PHP y los efectos. Diseña casos propios desde el contrato y usa php_replay. El driver debe ejecutar el código real de /app y simular dependencias. Incluye casos que deban cambiar y que deban conservarse. Si falta una dependencia fiel, informa el límite.'
       : 'Comprueba de forma independiente el criterio encargado. Reutiliza la evidencia de dependencias y ejecuta otra comprobación solo si cubre un escenario faltante o un estado distinto.',

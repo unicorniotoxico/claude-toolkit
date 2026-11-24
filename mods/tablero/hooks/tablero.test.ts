@@ -296,7 +296,10 @@ test('el aviso detalla cada paquete, permite omitir y se puede silenciar', async
   await pane.press({ key: 'seleccionar:apt:gdb' })
   expect(await pane.find({ key: 'herramientas:instalar' })).toBeDefined()
 
+  expect((await pane.find({ key: 'herramientas:omitir' }))?.text).toContain('esta vez')
+  expect((await pane.find({ key: 'herramientas:silenciar' }))?.text).toContain('Continuar sin preguntar')
   await pane.press({ key: 'herramientas:omitir' })
+  expect(await estado()).toContain('"avisos":true')
   expect(await estado()).toContain('"estado":"omitida"')
   expect(await pane.find({ key: 'herramientas:instalar' })).toBeUndefined()
   await $.tool.call(propuesta)
