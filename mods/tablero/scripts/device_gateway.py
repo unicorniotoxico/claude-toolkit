@@ -393,6 +393,7 @@ def local(folder, action, args):
             return dict(
                 enabled=enabled(db),
                 conexion=connection_info(folder),
+                puedeFirmar=(folder / "identidad" / "ca.key").is_file(),
                 pending=db.execute("SELECT peer,at FROM pending ORDER BY at DESC LIMIT 12").fetchall(),
                 grants=db.execute("SELECT peer,project,kind,mode,until FROM grants WHERE until>? ORDER BY until LIMIT 30", (now,)).fetchall(),
                 inbox=db.execute("SELECT project,kind,data FROM inbox ORDER BY rowid DESC LIMIT 12").fetchall(),

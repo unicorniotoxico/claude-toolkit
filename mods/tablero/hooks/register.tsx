@@ -56,6 +56,8 @@ const codigoDispositivo = atom({ plugin: 'tablero', key: 'codigoDispositivo' } a
 const mensajeDispositivo = atom({ plugin: 'tablero', key: 'mensajeDispositivo' } as const, '')
 const configuracionDispositivos = atom({ plugin: 'tablero', key: 'configuracionDispositivos' } as const,
   { cert: '', clave: '', autoridad: '', ip: '', puerto: '4321', origenes: '' })
+const CERTIFICADOS_INICIAL = { archivo: '', huella: '', huellaAutoridad: '', entrada: '', confirmada: false }
+const certificadosDispositivos = atom({ plugin: 'tablero', key: 'certificadosDispositivos' } as const, CERTIFICADOS_INICIAL)
 const showIdle = atom({ plugin: 'tablero', key: 'showIdle' } as const, false)
 
 // Temas: colores de títulos, barras y estados. 'claude' sigue el tema de Claude Code (claro u oscuro).
@@ -392,6 +394,52 @@ async function cambiarVistaDispositivo($: EngineInterface, vista: VistaDispositi
   await update($, peerDispositivo, () => '')
   await update($, envioDispositivo, () => [])
   await update($, formularioDispositivo, current => ({ ...current, codigo: '', valor: '', revision: '', coincide: false }))
+}
+
+async function abrirFirmaDispositivo($: EngineInterface) {
+  await cambiarVistaDispositivo($, 'cert-firmar')
+  await update($, certificadosDispositivos, () => CERTIFICADOS_INICIAL)
+}
+
+let gestionandoCertificados = false
+
+async function operarCertificados($: EngineInterface, accion: 'crear-autoridad' | 'crear-solicitud' | 'leer-solicitud' | 'firmar' | 'importar') {
+  if (gestionandoCertificados) return
+  gestionandoCertificados = true
+  try {
+    const data = await read($, certificadosDispositivos)
+    const entrada = data.entrada.trim()
+    if (accion === 'firmar' && !data.confirmada) throw new Error('Confirmá la huella de la solicitud antes de firmar.')
+    if (accion === 'importar' && (!entrada || !data.huellaAutoridad.trim()))
+      throw new Error('Ingresá el archivo firmado y la huella de la CA confirmada.')
+    if (accion === 'leer-solicitud' && !entrada) throw new Error('Ingresá la ruta del archivo .csr.')
+    const args = accion === 'firmar' ? [entrada, data.huella] :
+      accion === 'importar' ? [entrada, data.huellaAutoridad] :
+        accion === 'leer-solicitud' ? [entrada] : []
+    const base = $.plugin.root + '/../../memory-engine'
+    const resultado = await $.process.run([base + '/' + venvPython, '-I',
+      $.plugin.root + '/scripts/device_certificates.py', base + '/data/dispositivos', accion], {
+      timeoutMs: 30_000, stdin: JSON.stringify(args),
+    })
+    if (resultado.isStdoutTruncated) throw new Error('No se pudo verificar la respuesta local.')
+    const salida = JSON.parse(resultado.stdout)
+    if (resultado.exitCode !== 0) throw new Error(typeof salida.error === 'string' ? salida.error : 'No se pudo completar.')
+    if (typeof salida.cert === 'string' && typeof salida.key === 'string' && typeof salida.ca === 'string') {
+      await update($, configuracionDispositivos, f => ({ ...f, cert: salida.cert, clave: salida.key, autoridad: salida.ca }))
+      await cambiarVistaDispositivo($, 'red')
+    } else {
+      if (accion === 'crear-solicitud') await cambiarVistaDispositivo($, 'cert-solicitud')
+      await update($, certificadosDispositivos, current => ({ ...current,
+        archivo: String(salida.archivo ?? ''), huella: String(salida.huella ?? ''),
+        huellaAutoridad: String(salida.huellaAutoridad ?? ''), confirmada: false,
+      }))
+      await update($, mensajeDispositivo, () => '')
+    }
+  } catch (error) {
+    await update($, mensajeDispositivo, () => error instanceof Error ? error.message : 'No se pudo completar.')
+  } finally {
+    gestionandoCertificados = false
+  }
 }
 
 async function comenzarVinculacion($: EngineInterface) {
@@ -1147,13 +1195,14 @@ export const register: Register = on => {
     const monitor = await read($, estadoMonitor)
     const envio = await read($, envioDispositivo)
     const vistaActual = await read($, vistaDispositivo)
-    const pasoAnterior = vistaActual === 'red' ? 'identidad' : vistaActual === 'destino' ? 'agregar' :
+    const pasoAnterior = ['red', 'archivos', 'cert-solicitud'].includes(vistaActual) ? 'identidad' : vistaActual === 'destino' ? 'agregar' :
       vistaActual === 'usar' ? 'destino' : undefined
     const formulario = await read($, formularioDispositivo)
     const peerElegido = await read($, peerDispositivo)
     const codigo = await read($, codigoDispositivo)
     const mensaje = await read($, mensajeDispositivo)
     const config = await read($, configuracionDispositivos)
+    const datosCert = await read($, certificadosDispositivos)
     const conexion = dispositivos?.conexion
     const configurada = conexion?.estado === 'configurada'
     const camposCertificado = [['cert', 'Certificado de esta PC'], ['clave', 'Clave local'], ['autoridad', 'Certificado de la CA']] as const
@@ -1435,6 +1484,9 @@ export const register: Register = on => {
             {configurada && dispositivos?.enabled && (
               <Button key="dispositivos:nuevo-envio" onPress={() => cambiarVistaDispositivo($, 'enviar')}>Preparar un envío</Button>
             )}
+            {dispositivos?.puedeFirmar && (
+              <Button key="dispositivos:firmar-solicitud" plain onPress={() => abrirFirmaDispositivo($)}>Firmar certificado de otra PC</Button>
+            )}
             <Button key="dispositivos:permisos" onPress={() => cambiarVistaDispositivo($, 'permisos')}>
               Solicitudes y permisos{dispositivos?.pending.length ? ' · ' + dispositivos.pending.length + ' pendientes' : ''}
             </Button>
@@ -1444,16 +1496,77 @@ export const register: Register = on => {
           </Box>
         )}
 
-        {(vistaActual === 'identidad' || vistaActual === 'red') && (
+        {vistaActual === 'identidad' && (
           <Box flexDirection="column" gap={1}>
-            <Text bold>{vistaActual === 'identidad' ? '1. Certificados de esta PC' : '2. Dirección de esta PC'}</Text>
-            <Text dimColor>{vistaActual === 'identidad' ? 'Pegá las rutas de los archivos y guardá cada campo con Enter.' : 'Guardá cada campo con Enter. El firewall se configura por separado.'}</Text>
-            {(vistaActual === 'identidad' ? camposCertificado : camposRed).map(([id, label]) => (
+            <Text bold>Identidad de esta PC</Text>
+            <Button key="dispositivos:crear-ca" onPress={press => {
+              if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'crear-autoridad')
+            }}>Es la primera PC · Crear red y certificado</Button>
+            <Button key="dispositivos:crear-solicitud" onPress={press => {
+              if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'crear-solicitud')
+            }}>Me sumo a otra PC · Generar clave y solicitud</Button>
+            <Button key="dispositivos:usar-archivos" plain onPress={() => cambiarVistaDispositivo($, 'archivos')}>Ya tengo certificados</Button>
+          </Box>
+        )}
+
+        {vistaActual === 'cert-solicitud' && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Enviá la solicitud a la PC que firma</Text>
+            <Text>Archivo para compartir: {datosCert.archivo}</Text>
+            <Text>Huella de la solicitud: {datosCert.huella}</Text>
+            <Text dimColor>La clave privada quedó guardada en esta PC.</Text>
+            <Input key="dispositivo:respuesta-certificado" label="Ruta del certificado que te devolvieron" value={datosCert.entrada} submitLabel="Guardar"
+              onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, entrada: value }))} />
+            <Input key="dispositivo:huella-ca" label="Huella de la CA confirmada con la otra PC" value={datosCert.huellaAutoridad} submitLabel="Guardar"
+              onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, huellaAutoridad: value }))} />
+            <Button key="dispositivos:importar-certificado" variant="primary" onPress={press => {
+              if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'importar')
+            }}>Importar certificado y continuar</Button>
+          </Box>
+        )}
+
+        {vistaActual === 'cert-firmar' && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Firmar certificado de otra PC</Text>
+            {datosCert.huellaAutoridad ? (
+              <Box flexDirection="column">
+                <Text>Compartí este archivo: {datosCert.archivo}</Text>
+                <Text>Confirmá por otro canal la huella de tu CA: {datosCert.huellaAutoridad}</Text>
+              </Box>
+            ) : (
+              <Box flexDirection="column">
+                <Input key="dispositivo:archivo-csr" label="Ruta del archivo .csr recibido" value={datosCert.entrada} submitLabel="Guardar"
+                  onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, entrada: value, huella: '', confirmada: false }))} />
+                {datosCert.huella ? (
+                  <Box flexDirection="column">
+                    <Text>Huella de la solicitud: {datosCert.huella}</Text>
+                    <Button key="dispositivos:confirmar-csr" plain onPress={() => update($, certificadosDispositivos, f => ({ ...f, confirmada: !f.confirmada }))}>
+                      {datosCert.confirmada ? '☑' : '☐'} Confirmé la huella con la otra PC
+                    </Button>
+                    {datosCert.confirmada && (
+                      <Button key="dispositivos:firmar-certificado" variant="primary" onPress={press => {
+                        if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'firmar')
+                      }}>Firmar y generar archivo</Button>
+                    )}
+                  </Box>
+                ) : (
+                  <Button key="dispositivos:revisar-csr" onPress={() => operarCertificados($, 'leer-solicitud')}>Ver huella de la solicitud</Button>
+                )}
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {(vistaActual === 'archivos' || vistaActual === 'red') && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>{vistaActual === 'archivos' ? 'Certificados existentes' : '2. Dirección de esta PC'}</Text>
+            <Text dimColor>{vistaActual === 'archivos' ? 'Pegá las rutas de los archivos y guardá cada campo con Enter.' : 'Guardá cada campo con Enter. El firewall se configura por separado.'}</Text>
+            {(vistaActual === 'archivos' ? camposCertificado : camposRed).map(([id, label]) => (
               <Input key={'dispositivo:config:' + id} label={label} value={config[id]} submitLabel="Guardar"
                 onSubmit={value => update($, configuracionDispositivos, f => ({ ...f, [id as keyof ConfiguracionDispositivos]: value }))} />
             ))}
             <Button key="dispositivos:paso" variant="primary" onPress={press => {
-              if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, vistaActual)
+              if (press.surface === 'terminal' || press.surface === 'desktop') return avanzarVinculacion($, vistaActual === 'archivos' ? 'identidad' : 'red')
             }}>Siguiente</Button>
           </Box>
         )}
