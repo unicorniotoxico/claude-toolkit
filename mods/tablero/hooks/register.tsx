@@ -1,8 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRun, Limit, Look, McpServer, MemStats, Mode, SessionSummary, ToolStat, Usage } from '../types'
+import type { AgentRun, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
 import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
+import { leerPropuesta } from './herramientas'
 import { Equipos, planValidado, promptTarea, TIPOS } from './equipos'
 
 // Qué se actualiza cómo:
@@ -13,6 +14,7 @@ import { Equipos, planValidado, promptTarea, TIPOS } from './equipos'
 //    agentes y servidores MCP cada 30 s por si algo se cortó sin evento.
 
 const PLAN = 'mcp__tablero__equipos_desarrollo'
+const HERRAMIENTAS = 'mcp__tablero__herramientas_desarrollo'
 const PHP = 'mcp__tablero__php_replay'
 const lista = { type: 'array', items: { type: 'string' } }
 const texto = { type: 'string' }
@@ -37,6 +39,10 @@ const mcpOff = atom({ plugin: 'tablero', key: 'mcpOff' } as const, [])
 const equipos = atom({ plugin: 'tablero', key: 'equipos' } as const, [])
 const tab = atom({ plugin: 'tablero', key: 'tab' } as const, 'general')
 const seccionesAbiertas = atom({ plugin: 'tablero', key: 'seccionesAbiertas' } as const, [])
+const avisosHerramientas = atom({ plugin: 'tablero', key: 'avisosHerramientas' } as const, true)
+const solicitudHerramientas = atom({ plugin: 'tablero', key: 'solicitudHerramientas' } as const, null)
+const detallesHerramientas = atom({ plugin: 'tablero', key: 'detallesHerramientas' } as const, [])
+const excluidasHerramientas = atom({ plugin: 'tablero', key: 'excluidasHerramientas' } as const, [])
 const showIdle = atom({ plugin: 'tablero', key: 'showIdle' } as const, false)
 
 // Temas: colores de títulos, barras y estados. 'claude' sigue el tema de Claude Code (claro u oscuro).
@@ -390,6 +396,74 @@ async function setLook($: EngineInterface, change: (l: Look) => Look) {
   } catch {}
 }
 
+function avisarResultado($: EngineInterface) {
+  void $.prompt.submit({
+    text: 'El usuario resolvió el aviso de herramientas. Consultá herramientas_desarrollo con acción estado y continuá la tarea según esa decisión. Si eligió seguir sin instalar, usá las herramientas disponibles.',
+  }).catch(() => {})
+}
+
+async function instalarHerramientas($: EngineInterface, solicitud: SolicitudHerramientas) {
+  const base = $.plugin.root + '/../../memory-engine'
+  const rutaPython = base + '/' + venvPython
+  const script = $.plugin.root + '/scripts/install_tool.py'
+  const resultados: NonNullable<SolicitudHerramientas['resultados']> = []
+  for (const herramienta of solicitud.herramientas) {
+    let resultado: ResultadoHerramienta
+    try {
+      const salida = await $.process.run([rutaPython, '-I', script], {
+        timeoutMs: 270_000,
+        stdin: JSON.stringify(herramienta),
+      })
+      if (salida.exitCode !== 0 || salida.isStdoutTruncated) throw new Error('El instalador no devolvió un resultado.')
+      resultado = JSON.parse(salida.stdout) as ResultadoHerramienta
+    } catch (error) {
+      resultado = { estado: 'error', detalle: String(error).slice(0, 300) }
+    }
+    resultados.push({ ...herramienta, ...resultado })
+  }
+  try {
+    const guardadas = await $.store.get('herramientasDisponibles')
+    const recientes = [
+      ...resultados.filter(r => r.estado === 'disponible' && r.ruta),
+      ...(Array.isArray(guardadas) ? guardadas : []),
+    ]
+    const distintas = recientes.filter((r, i) => recientes.findIndex(x => x.gestor === r.gestor && x.paquete === r.paquete) === i)
+    await $.store.set('herramientasDisponibles', distintas.slice(0, 30))
+  } catch {}
+  const finalizada: SolicitudHerramientas = { ...solicitud, estado: 'finalizada', resultados }
+  await update($, solicitudHerramientas, () => finalizada)
+  avisarResultado($)
+}
+
+let resolviendoAviso = false
+
+async function resolverAviso($: EngineInterface, instalar: boolean) {
+  const solicitud = await read($, solicitudHerramientas)
+  if (resolviendoAviso || solicitud?.estado !== 'pendiente') return
+  resolviendoAviso = true
+  try {
+    const excluidas = await read($, excluidasHerramientas)
+    const elegidas = solicitud.herramientas.filter(h => !excluidas.includes(h.gestor + ':' + h.paquete))
+    if (instalar && !elegidas.length) return
+    const estado = instalar ? 'instalando' : 'omitida'
+    await update($, solicitudHerramientas, () => ({ ...solicitud, estado }))
+    if (instalar) {
+      $.clock.after(1, () => instalarHerramientas($, { ...solicitud, herramientas: elegidas }))
+    } else {
+      avisarResultado($)
+    }
+  } finally {
+    resolviendoAviso = false
+  }
+}
+
+async function alternarAvisos($: EngineInterface) {
+  const activo = await read($, avisosHerramientas)
+  await update($, avisosHerramientas, () => !activo)
+  try { await $.store.set('avisosHerramientas', !activo) } catch {}
+  if (activo) await resolverAviso($, false)
+}
+
 // ---------------------------------------------------------------- hooks
 
 async function iniciarDesarrollo($: EngineInterface) {
@@ -409,6 +483,17 @@ async function iniciarDesarrollo($: EngineInterface) {
         id: texto, ajuste: texto,
       },
     },
+  })
+  await $.tool.register({
+    name: 'herramientas_desarrollo',
+    description: 'Consultá estado y rutas ya registradas o proponé herramientas faltantes para un diagnóstico concreto. El tablero solicita la decisión del usuario.',
+    inputSchema: { type: 'object', required: ['accion'], properties: {
+      accion: { enum: ['estado', 'proponer'] },
+      herramientas: { type: 'array', items: {
+        type: 'object', required: ['nombre', 'motivo', 'gestor', 'paquete', 'ejecutable'],
+        properties: { nombre: texto, motivo: texto, gestor: { enum: ['winget', 'brew', 'apt', 'go'] }, paquete: texto, ejecutable: texto },
+      } },
+    } },
   })
   await $.tool.register({ name: 'php_replay', description: 'Solo para el verificador PHP asignado. Ejecuta el mismo driver contra el commit base y el PHP actual en Docker sin red. El driver PHP lee stdin, usa /app para los fuentes y escribe el resultado observado. Comparación literal de stdout.',
     inputSchema: {
@@ -463,6 +548,36 @@ export const register: Register = on => {
       f.equipo + ' · ' + f.id + ' · ' + f.estado + (f.demorada ? ' · demorada' : '') +
       (f.verificacion ? ' · PHP ' + f.verificacion : ''),
     ).join('\n') : 'Todavía no hay equipos en esta sesión.' }
+  })
+
+  on('tool.run', { tool: HERRAMIENTAS }, async ($, e) => {
+    const seleccionado = await read($, mode)
+    if (e.agentId || (seleccionado !== 'desarrollo' && seleccionado !== 'ambos'))
+      return { deny: 'La solicitud la gestiona el orquestador de Desarrollo.' }
+    const args = e as unknown as Record<string, unknown>
+    if (args.accion === 'estado') {
+      const disponibles = await $.store.get('herramientasDisponibles')
+      return { result: JSON.stringify({
+        avisos: await read($, avisosHerramientas),
+        solicitud: await read($, solicitudHerramientas),
+        disponibles: Array.isArray(disponibles) ? disponibles : [],
+      }) }
+    }
+    if (args.accion !== 'proponer') return { deny: 'Acción inválida.' }
+    if (!(await read($, avisosHerramientas))) return { result: 'Avisos desactivados. Continuá con las herramientas disponibles.' }
+    const actual = await read($, solicitudHerramientas)
+    if (actual?.estado === 'pendiente' || actual?.estado === 'instalando')
+      return { result: 'Ya hay un aviso en curso. Continuá con el trabajo independiente y esperá la decisión sin consultar en bucle.' }
+    try {
+      const herramientas = leerPropuesta(args.herramientas)
+      await update($, detallesHerramientas, () => [])
+      await update($, excluidasHerramientas, () => [])
+      await update($, solicitudHerramientas, () => ({ estado: 'pendiente', herramientas }))
+      void $.ui.open({ id: PANE, title: TITLE }).catch(() => {})
+      return { result: 'Aviso visible en el tablero. Podés avanzar con tareas independientes. El tablero comunicará la decisión cuando el usuario responda.' }
+    } catch (error) {
+      return { deny: String(error).slice(0, 260) }
+    }
   })
 
   on('tool.run', { tool: PLAN }, async ($, e) => {
@@ -612,6 +727,10 @@ export const register: Register = on => {
         await update($, mcpOff, () => v)
         if (v.length) $.ui.invalidate('tool.describe')
       }
+    } catch {}
+    try {
+      if ((await $.store.get('avisosHerramientas')) === false)
+        await update($, avisosHerramientas, () => false)
     } catch {}
     void $.ui.open({ id: PANE, title: TITLE }) // se abre solo; /tablero lo reabre si se cerró
     startTimers($)
@@ -809,6 +928,10 @@ export const register: Register = on => {
     const curMode = await read($, mode)
     const off = await read($, mcpOff)
     const tabActual = await read($, tab)
+    const solicitud = await read($, solicitudHerramientas)
+    const detalles = await read($, detallesHerramientas)
+    const excluidas = await read($, excluidasHerramientas)
+    const avisos = await read($, avisosHerramientas)
     const abiertas = await read($, seccionesAbiertas)
     const abierta = (id: string) => abiertas.includes(id)
     const flecha = (id: string) => abierta(id) ? '▾' : '▸'
@@ -990,7 +1113,7 @@ export const register: Register = on => {
             <Text bold color={th.accent}>{flecha('apariencia')} Apariencia</Text>
           </Button>
           {abierta('apariencia') && (
-            <Box flexDirection="row" gap={1}>
+            <Box flexDirection="row" flexWrap="wrap" gap={1}>
               <Button key="tema" plain onPress={() => setLook($, l => ({ ...l, tema: nextOf(Object.keys(THEMES), l.tema) }))}>
                 tema {lk.tema} ›
               </Button>
@@ -1006,6 +1129,9 @@ export const register: Register = on => {
               </Button>
               <Button key="compacto" plain onPress={() => setLook($, l => ({ ...l, compacto: !l.compacto }))}>
                 {lk.compacto ? '☑' : '☐'} compacto
+              </Button>
+              <Button key="herramientas:avisos" plain onPress={() => alternarAvisos($)}>
+                {avisos ? '☑' : '☐'} Avisos de herramientas
               </Button>
             </Box>
           )}
@@ -1070,6 +1196,57 @@ export const register: Register = on => {
             </Button>
           ))}
         </Box>
+
+        {solicitud && !solicitud.oculta && solicitud.estado !== 'omitida' && (
+          <Box flexDirection="column" borderStyle="round" borderColor={th.warn} paddingX={1}>
+            <Text bold color={th.accent}>Herramientas para el diagnóstico</Text>
+            {solicitud.herramientas.map(herramienta => {
+              const id = herramienta.gestor + ':' + herramienta.paquete
+              const abierto = detalles.includes(id)
+              const resultado = solicitud.resultados?.find(r => r.gestor === herramienta.gestor && r.paquete === herramienta.paquete)
+              return (
+                <Box key={id} flexDirection="column">
+                  <Box flexDirection="row" flexWrap="wrap" gap={1}>
+                    <Button key={`detalle:${id}`} plain onPress={() =>
+                      update($, detallesHerramientas, ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])}>
+                      {abierto ? '▾' : '▸'} {herramienta.nombre} · {id}{resultado ? ' · ' + resultado.estado : ''}
+                    </Button>
+                    {solicitud.estado === 'pendiente' && (
+                      <Button key={`seleccionar:${id}`} plain onPress={() =>
+                        update($, excluidasHerramientas, ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])}>
+                        {excluidas.includes(id) ? '☐ Excluida' : '☑ Seleccionada'}
+                      </Button>
+                    )}
+                  </Box>
+                  {abierto && (
+                    <Box flexDirection="column" paddingLeft={2}>
+                      <Text>{herramienta.motivo}</Text>
+                      <Text dimColor>{herramienta.gestor} · {herramienta.paquete}</Text>
+                      <Text dimColor>Ejecutable: {herramienta.ejecutable}</Text>
+                      {resultado?.ruta && <Text>Ruta: {resultado.ruta}</Text>}
+                      {resultado?.detalle && <Text>{resultado.detalle}</Text>}
+                    </Box>
+                  )}
+                </Box>
+              )
+            })}
+            {solicitud.estado === 'pendiente' && (
+              <Box flexDirection="row" flexWrap="wrap" gap={1}>
+                {solicitud.herramientas.some(h => !excluidas.includes(h.gestor + ':' + h.paquete)) && (
+                  <Button key="herramientas:instalar" variant="primary" onPress={() => resolverAviso($, true)}>Instalar seleccionadas</Button>
+                )}
+                <Button key="herramientas:omitir" onPress={() => resolverAviso($, false)}>Seguir sin instalar</Button>
+                <Button key="herramientas:silenciar" plain onPress={() => alternarAvisos($)}>Desactivar avisos</Button>
+              </Box>
+            )}
+            {solicitud.estado === 'instalando' && <Text dimColor>Instalación en curso…</Text>}
+            {solicitud.estado === 'finalizada' && (
+              <Button key="herramientas:cerrar" plain onPress={() => update($, solicitudHerramientas, () => ({ ...solicitud, oculta: true }))}>
+                Cerrar
+              </Button>
+            )}
+          </Box>
+        )}
 
         {general}
         {vistaAgentes}

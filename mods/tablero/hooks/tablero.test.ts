@@ -1,6 +1,8 @@
 import type { RenderElement } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
+declare const setTimeout: (callback: () => void, ms: number) => unknown
+
 import { mcpBlock, mergeAgents, parseMemStats, pickLimits, summarizeSessions } from './register'
 
 test('un servidor MCP apagado bloquea solo sus herramientas', async () => {
@@ -253,4 +255,66 @@ test('el modo Desarrollo solicita agentes nativos y muestra las tareas rechazada
   expect(JSON.stringify(result.result)).toContain('bloqueado')
   await pane.press({ key: 'tab:agentes' })
   expect((await pane.find({ type: 'Text', text: /Catálogo · catalogo/ }))?.text).toContain('pendiente')
+})
+
+test('el aviso detalla cada paquete, permite omitir y se puede silenciar', async ($, on) => {
+  let ejecuciones = 0
+  on('clock.after', () => ({ value: undefined }))
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 1000 }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('process.run', () => {
+    ejecuciones++
+    return { value: { exitCode: 0, stdout: '{"estado":"disponible","ruta":"/prueba/gdb"}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('ui.render', ($, e) => h($.ui.resolve(e).Box, {}) as RenderElement)
+  const pane = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 50 }, view: {} },
+  })
+  await pane.press({ key: 'cambiar-modo' })
+  const band = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+  })
+  await band.press({ key: 'dev' })
+
+  const herramienta = { nombre: 'GDB', gestor: 'apt', paquete: 'gdb', ejecutable: 'gdb', motivo: 'Inspeccionar dónde falla la prueba local.' }
+  const propuesta = { tool: 'mcp__tablero__herramientas_desarrollo' as const, accion: 'proponer', herramientas: [herramienta] }
+  const estado = async () => String((await $.tool.call({ tool: propuesta.tool, accion: 'estado' })).result)
+  const invalida = await $.tool.call({ ...propuesta, herramientas: [{ ...herramienta, paquete: 'gdb-' }] })
+  expect(invalida.isError).toBe(true)
+  await $.tool.call(propuesta)
+  expect(await pane.find({ text: /Inspeccionar/ })).toBeUndefined()
+  await pane.press({ key: 'detalle:apt:gdb' })
+  expect(await pane.find({ text: /Inspeccionar/ })).toBeDefined()
+  expect(ejecuciones).toBe(0)
+  await pane.press({ key: 'seleccionar:apt:gdb' })
+  expect(await pane.find({ key: 'herramientas:instalar' })).toBeUndefined()
+  await pane.press({ key: 'seleccionar:apt:gdb' })
+  expect(await pane.find({ key: 'herramientas:instalar' })).toBeDefined()
+
+  await pane.press({ key: 'herramientas:omitir' })
+  expect(await estado()).toContain('"estado":"omitida"')
+  expect(await pane.find({ key: 'herramientas:instalar' })).toBeUndefined()
+  await $.tool.call(propuesta)
+  await pane.press({ key: 'herramientas:silenciar' })
+  expect(await estado()).toContain('"avisos":false')
+  expect(String((await $.tool.call(propuesta)).result)).toContain('Avisos desactivados')
+  expect(await pane.find({ key: 'herramientas:instalar' })).toBeUndefined()
+
+  await pane.press({ key: 'seccion:apariencia' })
+  await pane.press({ key: 'herramientas:avisos' })
+  expect(await estado()).toContain('"avisos":true')
+  expect(ejecuciones).toBe(0)
+  await $.tool.call({ ...propuesta, herramientas: [herramienta, { ...herramienta, nombre: 'LLDB', paquete: 'lldb', ejecutable: 'lldb' }] })
+  await pane.press({ key: 'seleccionar:apt:lldb' })
+  await pane.press({ key: 'herramientas:instalar' })
+  await new Promise<void>(resolve => setTimeout(resolve, 150))
+  const resultado = await estado()
+  expect(resultado).toContain('/prueba/gdb')
+  expect(resultado).not.toContain('lldb')
+  expect(ejecuciones).toBe(1)
 })

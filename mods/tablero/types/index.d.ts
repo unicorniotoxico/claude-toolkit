@@ -51,6 +51,25 @@ export type Look = {
 export type Mode = 'ciberseguridad' | 'desarrollo' | 'ambos' | 'ninguno'
 export type MemStats ={ active: number; stale: number; prompts: number; injected: number; hookP95: number; error?: string }
 
+export type Herramienta = {
+  nombre: string
+  motivo: string
+  gestor: 'winget' | 'brew' | 'apt' | 'go'
+  paquete: string
+  ejecutable: string
+}
+export type ResultadoHerramienta = {
+  estado: 'disponible' | 'error' | 'pendiente'
+  ruta?: string
+  detalle?: string
+}
+export type SolicitudHerramientas = {
+  herramientas: Herramienta[]
+  estado: 'pendiente' | 'instalando' | 'omitida' | 'finalizada'
+  oculta?: boolean
+  resultados?: Array<Herramienta & ResultadoHerramienta>
+}
+
 declare module 'claude-code' {
   interface PluginState {
     tablero: {
@@ -72,6 +91,10 @@ declare module 'claude-code' {
       mcpOff: string[]
       /** lista de sesiones cerradas o inactivas desplegada */
       showIdle: boolean
+      avisosHerramientas: boolean
+      solicitudHerramientas: SolicitudHerramientas | null
+      detallesHerramientas: string[]
+      excluidasHerramientas: string[]
       seccionesAbiertas: string[]
       tab: 'general' | 'agentes'
     }
