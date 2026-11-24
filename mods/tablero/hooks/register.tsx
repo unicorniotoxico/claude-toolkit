@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRun, ConfiguracionDispositivos, EstadoDispositivos, FormularioDispositivo, PreferenciasSeguridad, VistaDispositivos, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
+import type { AgentRun, Consumo, ConfiguracionDispositivos, EstadoDispositivos, FormularioDispositivo, PreferenciasSeguridad, VistaDispositivos, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
 import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
 import { ALERTAS, BLOQUES, FORMULARIO_INICIAL, describirBloque, prepararEnvio, validarDestino } from './dispositivos'
+import { ConsumoLocal, sumarConsumos, totalTokens } from './consumo'
 import { leerPropuesta } from './herramientas'
 import { Equipos, planValidado, promptTarea, TIPOS } from './equipos'
 
@@ -23,6 +24,9 @@ const texto = { type: 'string' }
 const PANE = 'tablero'
 const TITLE = 'Tablero'
 const usage = atom({ plugin: 'tablero', key: 'usage' } as const, null)
+const consumoAgentes = atom({ plugin: 'tablero', key: 'consumoAgentes' } as const, null)
+const detallesConsumo = atom({ plugin: 'tablero', key: 'detallesConsumo' } as const, [])
+const registroConsumo = new ConsumoLocal()
 const tools = atom({ plugin: 'tablero', key: 'tools' } as const, {})
 const mcp = atom({ plugin: 'tablero', key: 'mcp' } as const, [])
 const agents = atom({ plugin: 'tablero', key: 'agents' } as const, {})
@@ -214,7 +218,7 @@ async function safeNow($: EngineInterface) {
 function once(name: string, fn: () => Promise<unknown>) {
   if (busy.has(name)) return
   busy.add(name)
-  fn()
+  return fn()
     .catch(() => {})
     .finally(() => busy.delete(name))
 }
@@ -282,6 +286,18 @@ async function readSessions($: EngineInterface) {
     const v = out.sort((a, b) => a.id.localeCompare(b.id))
     if (changed(await read($, sessions), v)) await update($, sessions, () => v)
   }
+}
+
+async function refrescarConsumo($: EngineInterface) {
+  if (await read($, tab) !== 'agentes') return
+  const sesion = await $.session.id()
+  const info = await $.session.info()
+  const medicion = await registroConsumo.medir({
+    list: ruta => $.fs.list(ruta),
+    stat: ruta => $.fs.stat(ruta),
+    read: (ruta, offset, length) => $.fs.read(ruta, { offset, length }),
+  }, sesion, info.transcriptPath)
+  if (changed(await read($, consumoAgentes), medicion)) await update($, consumoAgentes, () => medicion)
 }
 
 async function refreshUsage($: EngineInterface) {
@@ -554,6 +570,7 @@ function startTimers($: EngineInterface) {
         await refrescarSeguridad($, true)
     })),
     $.clock.every(USAGE_MS, () => once('usage', () => refreshUsage($).then(() => readSessions($)))),
+    $.clock.every(5_000, () => once('consumo-agentes', () => refrescarConsumo($))),
     $.clock.every(CLOCK_MS, () =>
       once('clock', async () => {
         // solo redibuja las duraciones mientras hay agentes corriendo; no consulta nada
@@ -1857,24 +1874,54 @@ export const register: Register = on => {
       </Box>
     )
 
+    const consumoSesion = tabActual === 'agentes' ? await read($, consumoAgentes) : null
+    const consumoAbierto = tabActual === 'agentes' ? await read($, detallesConsumo) : []
+    const consumoPorAgente = consumoSesion?.agentes ?? {}
+    const agentesActivos = ags.filter(([, a]) => !DONE.has(a.status))
+    const mediciones = [consumoSesion?.principal, ...Object.values(consumoPorAgente).map(a => a.consumo)]
+      .filter((c): c is Consumo => c !== undefined)
+    const tokens = (n: number) => n.toLocaleString('es-AR')
+    const filaConsumo = (id: string, nombre: string, consumo?: Consumo) => {
+      const abierta = consumoAbierto.includes(id)
+      if (!consumo) return <Text>{nombre} <Text dimColor>· Sin medición</Text></Text>
+      return (
+        <Box flexDirection="column">
+          <Button key={'consumo:' + id} plain onPress={() =>
+            update($, detallesConsumo, ids => abierta ? ids.filter(x => x !== id) : [...ids, id])}>
+            {abierta ? '▾' : '▸'} {nombre} · {tokens(totalTokens(consumo))} tokens
+          </Button>
+          {abierta && (
+            <Box flexDirection="column" paddingLeft={2}>
+              <Text dimColor>Entrada nueva {tokens(consumo.entrada)} · Salida {tokens(consumo.salida)}</Text>
+              <Text dimColor>Caché escrita {tokens(consumo.cacheCreada)} · Leída {tokens(consumo.cacheLeida)}</Text>
+            </Box>
+          )}
+        </Box>
+      )
+    }
     const vistaAgentes = tabActual === 'agentes' && (
       <Box flexDirection="column" gap={lk.compacto ? 0 : 1}>
-        <Box flexDirection="column">
-          <Text bold color={th.accent}>
-            Agentes{' '}
+        <Box flexDirection="column" gap={lk.compacto ? 0 : 1}>
+          <Box flexDirection="column">
+            <Text bold color={th.accent}>Consumo de esta sesión</Text>
             <Text dimColor>
-              ({ags.filter(([, a]) => !DONE.has(a.status)).length} activos · {ags.length} en la sesión)
+              {!consumoSesion ? 'Leyendo el registro local…' : mediciones.length ?
+                tokens(totalTokens(sumarConsumos(mediciones))) + ' tokens registrados' : 'Todavía no hay tokens registrados'}
+              {consumoSesion?.parcial ? ' · Lectura parcial' : ''}
             </Text>
-          </Text>
-          {ags.length === 0 && <Text dimColor>Todavía no se lanzó ninguno.</Text>}
-          {ags.map(([id, a]) => (
-            <Text key={id}>
-              <Text color={th[statusTone(a.status)]}>●</Text> {a.type}
+          </Box>
+          {filaConsumo('principal', 'Agente principal', consumoSesion?.principal)}
+          {agentesActivos.length === 0 && <Text dimColor>No hay subagentes activos.</Text>}
+          {agentesActivos.map(([id, a]) => (
+            <Box key={id} flexDirection="column">
+              {filaConsumo(id, a.type || 'Subagente ' + id.slice(0, 12), consumoPorAgente[id]?.consumo)}
               <Text dimColor>
-                {a.model ? ` · ${a.model}` : ''} · {statusLabel(a.status)} · {duration((a.endedAt ?? now) - a.startedAt)}
-              </Text>{' '}
-              {a.description}
-            </Text>
+                <Text color={th[statusTone(a.status)]}>●</Text> {statusLabel(a.status)}
+                {consumoPorAgente[id]?.modelo || a.model ? ' · ' + (consumoPorAgente[id]?.modelo || a.model) : ''}
+                {' · '}{duration((a.endedAt ?? now) - a.startedAt)}
+              </Text>
+              {a.description && <Text>{a.description}</Text>}
+            </Box>
           ))}
         </Box>
 
@@ -1907,6 +1954,10 @@ export const register: Register = on => {
               if (tabActual === id) return
               await update($, tab, () => id)
               if (id === 'dispositivos') await refrescarSeguridad($)
+              if (id === 'agentes') {
+                try { await reconcileAgents($) } catch {}
+                try { await once('consumo-agentes', () => refrescarConsumo($)) } catch {}
+              }
               try {
                 await $.ui.scroll({ in: PANE, to: 'start' })
               } catch {}

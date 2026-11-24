@@ -1,3 +1,14 @@
+export type Consumo = {
+  entrada: number
+  salida: number
+  cacheCreada: number
+  cacheLeida: number
+}
+export type ConsumoSesion = {
+  principal?: Consumo
+  agentes: Record<string, { consumo?: Consumo; modelo?: string }>
+  parcial: boolean
+}
 export type Usage = {
   usd?: number
   ctxPercent?: number
@@ -98,6 +109,8 @@ declare module 'claude-code' {
   interface PluginState {
     tablero: {
       usage: Usage | null
+      consumoAgentes: ConsumoSesion | null
+      detallesConsumo: string[]
       tools: Record<string, ToolStat>
       mcp: McpServer[]
       agents: Record<string, AgentRun>

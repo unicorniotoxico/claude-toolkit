@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 
 declare const setTimeout: (callback: () => void, ms: number) => unknown
 
+import { ConsumoLocal, totalTokens } from './consumo'
 import { mcpBlock, mergeAgents, parseMemStats, pickLimits, summarizeSessions } from './register'
 
 test('un servidor MCP apagado bloquea solo sus herramientas', async () => {
@@ -211,10 +212,10 @@ test('las secciones se despliegan en su lugar y la pestaña Agentes reemplaza la
     await ui.press({ key: 'tab:agentes' })
     expect(await ui.find({ key: 'seccion:mcp' })).toBeUndefined()
     expect(await ui.find({ key: 'seccion:sesion' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: /Todavía no se lanzó ninguno/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /No hay subagentes activos/ })).toBeDefined()
     await ui.press({ key: 'tab:general' })
     expect(await ui.find({ key: 'seccion:mcp' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Todavía no se lanzó ninguno/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /No hay subagentes activos/ })).toBeUndefined()
     await ui.unmount()
   }
 })
@@ -400,4 +401,54 @@ test('Agregar dispositivo desbloquea red solo después de validar los certificad
   expect(await ui.find({ key: 'dispositivo:config:ip' })).toBeDefined()
   expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeUndefined()
   expect(calls).not.toContain('start-gateway')
+})
+
+test('Agentes muestra los tokens de esta sesión por agente y permite desplegar el desglose', async ($, on) => {
+  const ruta = '/claude/proyecto/actual.jsonl'
+  const dir = '/claude/proyecto/actual/subagents'
+  const sub = dir + '/agent-a1.jsonl'
+  const fila = (id: string, entrada: number, salida: number, cache: number, sessionId = 'actual') =>
+    JSON.stringify({ type: 'assistant', sessionId, message: { id, model: 'haiku',
+      usage: { input_tokens: entrada, output_tokens: salida, cache_read_input_tokens: cache } } }) + '\n'
+  const archivos: Record<string, string> = {
+    [ruta]: fila('msg1', 2, 0, 20) + fila('msg1', 2, 3, 20) + fila('otro', 900, 900, 900, 'ajena'),
+    [sub]: fila('msg1', 2, 3, 20) + fila('msg2', 4, 5, 30),
+  }
+  const normalizar = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+  const list = async (path: string) => normalizar(path) === dir ? [{ name: 'agent-a1.jsonl', kind: 'file', isLink: false }] : []
+  const stat = async (path: string) => ({ kind: 'file', size: archivos[normalizar(path)]?.length ?? 0, mtimeMs: 1000, isLink: false })
+  const leer = async (path: string, offset: number, length: number) => (archivos[normalizar(path)] ?? '').slice(offset, offset + length)
+  const medidor = new ConsumoLocal()
+  const inicial = await medidor.medir({ list, stat, read: leer }, 'actual', ruta)
+  expect(totalTokens(inicial.principal!)).toBe(25)
+  expect(totalTokens(inicial.agentes.a1!.consumo!)).toBe(39)
+  archivos[sub] += fila('msg3', 1, 2, 3)
+  const despues = await medidor.medir({ list, stat, read: leer }, 'actual', ruta)
+  expect(totalTokens(despues.agentes.a1!.consumo!)).toBe(45)
+
+  let status = 'running'
+  on('clock.now', () => ({ value: 1000 }))
+  on('agent.list', () => ({ value: [{ id: 'a1', type: 'Revisor', description: 'Revisar cambios', status }] }))
+  on('session.id', () => ({ value: 'actual' }))
+  on('session.info', () => ({ value: { transcriptPath: ruta } }))
+  on('fs.list', async (_$, e) => ({ value: await list(e.path) }))
+  on('fs.stat', async (_$, e) => ({ value: await stat(e.path) }))
+  on('fs.read', async (_$, e) => ({ value: await leer(e.path, e.offset ?? 0, e.length ?? 0) }))
+  const ui = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 42, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  })
+  await ui.press({ key: 'tab:agentes' })
+  const consumoPrincipal = await ui.find({ key: 'consumo:principal' })
+  expect(consumoPrincipal?.text ?? (await ui.find({ text: /Todavía no hay tokens registrados|Leyendo el registro local/ }))?.text).toContain('25 tokens')
+  expect((await ui.find({ key: 'consumo:a1' }))?.text).toContain('45 tokens')
+  await ui.press({ key: 'consumo:a1' })
+  expect(await ui.find({ text: /Entrada nueva 5 · Salida 7/ })).toBeDefined()
+  expect(await ui.find({ text: /Caché escrita 0 · Leída 33/ })).toBeDefined()
+  status = 'completed'
+  await ui.press({ key: 'tab:general' })
+  await ui.press({ key: 'tab:agentes' })
+  expect(await ui.find({ key: 'consumo:a1' })).toBeUndefined()
+  expect(await ui.find({ text: 'No hay subagentes activos.' })).toBeDefined()
+  expect(await ui.find({ text: '70 tokens registrados' })).toBeDefined()
 })
