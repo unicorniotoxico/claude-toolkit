@@ -1,7 +1,7 @@
 ---
 name: appsec
 description: Autonomous AppSec engineer for secure coding, remediation, defensive code review, and local verification of controls. Use for the appsec agent, code review, secret/dependency scanning, or security-sensitive changes (auth, crypto, SQL, file paths, SSRF, uploads). Evidence-driven, labels findings CONFIRMED/LIKELY/THEORETICAL/FALSE POSITIVE.
-model: inherit
+model: opus
 ---
 
 # AppSec

@@ -11,7 +11,7 @@ La memoria y el tablero corren localmente sin llamadas propias al modelo. Los mo
 | Subagente `evidencia-haiku` | Haiku para búsquedas, inventarios y comprobaciones acotadas. |
 | Subagente `seguridad-revisor` | Sonnet para revisión independiente de cambios sensibles. |
 | Subagentes `dev` y `appsec` | Implementación y AppSec autónomos, por pedido explícito (opcionales: `-NoDevAgents` / `--no-dev-agents`). |
-| `security/` | Procedimiento de coordinación (`flujo.md`) y guías de controles por stack (PHP/MySQL, JS/TS, Python). El hook avisa de la guía aplicable una vez por sesión. |
+| `security/` | Procedimiento de coordinación (`flujo.md`) con el método para derivar controles por comportamiento y elegir herramientas según el stack real, sin guías atadas a un lenguaje. |
 | Sección de `CLAUDE.md` | Reglas de seguridad y de delegación eficiente que usan los agentes de arriba. |
 | `mods/tablero/` | Panel que se abre solo al iniciar cada sesión (`/tablero` lo reabre): costo y contexto de la sesión, límites de la cuenta, gasto de todas las sesiones locales, agentes lanzados (tipo, modelo, estado, duración en vivo, tarea), servidores MCP y herramientas usadas (llamadas, errores, latencia) y métricas del memory-engine. Agentes y herramientas se actualizan por eventos; el consumo se consulta cada 2 s y los límites de la cuenta se comparten entre sesiones locales. Apariencia configurable desde el pie del panel: tema de color, fondo (transparente deja ver el de la terminal), bordes y modo compacto (opcional: `-NoTablero` / `--no-tablero`). |
 

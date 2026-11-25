@@ -17,33 +17,29 @@ Una refactorización puede ser sensible. Un diff pequeño puede afectar todo un 
 
 Entrega únicamente:
 
-- **Objetivo:** una pregunta y los requisitos o controles seleccionados para el stack real; incluye el criterio relevante, no todas las guías.
+- **Objetivo:** una pregunta y los controles que apliquen al comportamiento afectado; incluye el criterio relevante, no listas completas.
 - **Estado y alcance:** revisión base, diff o archivos, llamadas relevantes y configuración afectada. Incluye cambios locales sin commit cuando existan.
 - **Evidencia disponible:** comandos, resultados, ubicaciones de logs y condiciones de ejecución; no vuelques todos los logs al contexto.
 - **Cierre:** qué evidencia basta y qué situaciones obligan a ampliar la revisión.
 
 Por defecto, usa un revisor. Dos especialistas pueden trabajar en paralelo si tienen preguntas y cobertura distintas; el paralelismo debe aportar capacidad o reducir espera sin duplicar la tarea. Si aparece otra pregunta, delimítala antes de abrir otro agente. Esto es una política de trabajo, no un límite de concurrencia impuesto por la plataforma.
 
-## 3. Seleccionar controles y herramientas
+## 3. Controles y herramientas: pensar por comportamiento, no por lenguaje
 
-Confirma el stack con el código, los manifiestos y la configuración de CI cercanos al cambio. Usa los comandos del proyecto, por ejemplo los de un módulo Go (`go.mod`) o un proyecto Visual Basic .NET (`.vbproj`). Consulta versiones cuando afecten el análisis. No presupongas un framework ni recorras todo el equipo.
+No hay guías por lenguaje. Los controles se derivan de lo que el código hace, y las herramientas se eligen según lo que haya instalado.
 
-| Stack que interviene en el cambio | Guía a consultar |
-| --- | --- |
-| PHP o consultas MySQL | `{{CLAUDE_DIR}}/security/stacks/php-mysql.md` |
-| JavaScript o TypeScript, navegador o servidor | `{{CLAUDE_DIR}}/security/stacks/javascript-typescript.md` |
-| Python | `{{CLAUDE_DIR}}/security/stacks/python.md` |
+1. **Identifica el stack real** con el código, los manifiestos y el CI cercanos al cambio (`go.mod`, `package.json`, `*.vbproj`, `composer.json`, etc.). Usa los comandos nativos del proyecto. No presupongas framework ni recorras todo el equipo.
+2. **Deriva los controles del comportamiento afectado**, con el estándar que aplique (OWASP ASVS/Top 10, CWE, NIST SSDF): quién entra y con qué permiso, qué dato no confiable llega a qué destino (consulta, comando, archivo, URL, plantilla, deserializador), qué se guarda o se registra, qué secretos o claves intervienen y qué operación mueve dinero o borra datos. Añade los roles, la separación entre clientes y las operaciones sensibles reales del proyecto; no los inventes.
+3. **Si no conoces el lenguaje o framework, no lo adivines.** Busca en la documentación oficial cómo ese stack expresa el control (consultas parametrizadas, escape de salida, sesiones, subida de archivos, etc.) y qué herramienta lo comprueba: analizador estático, auditoría de dependencias, búsqueda de secretos, linter de seguridad o tests. Comprueba qué está instalado antes de proponer un comando (`Get-Command <x>`, `command -v <x>`). Si falta, usa su imagen de Docker u otra equivalente o deja la comprobación pendiente.
+4. **Lo que quede fuera de lo previsto no se descarta.** Un componente raro, una llamada dinámica o una configuración externa se rastrea hasta su efecto; si no se puede, queda como UNVERIFIED con lo que falta.
+5. En proyectos mixtos sigue las conexiones entre capas que puedan invalidar el control; otro lenguaje no exige otro agente.
 
-Lee solo las guías pertinentes y selecciona controles por comportamiento afectado. En proyectos mixtos, sigue las conexiones entre capas que puedan invalidar el control; otro lenguaje no exige otro agente. Si el principal ya seleccionó controles, entrega esos criterios al revisor para evitar lecturas repetidas. Las guías son opcionales. Si el stack carece de guía, deriva los controles de los requisitos, código y documentación pertinente. Si falta un entorno de ejecución compatible, conserva la revisión estática y deja la prueba de runtime pendiente.
+Para cada control elegido registra ubicación, criterio de aceptación y evidencia, y distingue verificado, no aplicable, pendiente y hallazgo.
 
-Para cada control elegido registra ubicación, criterio de aceptación y evidencia. Añade roles, permisos de negocio, separación entre clientes y operaciones sensibles reales del proyecto; no inventes esas reglas. Distingue verificado, no aplicable, pendiente y hallazgo.
-
-- Las pautas de brevedad y mínimo cambio están en las instrucciones globales de este perfil.
-- Usa análisis estático, búsqueda de secretos, revisión de dependencias y tests disponibles en el proyecto según el cambio. Identifica la herramienta antes de proponer su comando.
-- Para requisitos documentados, entrega al revisor controles concretos y el código que debe cumplirlos. Cumplir una especificación no demuestra por sí solo que sea segura.
+- Cumplir una especificación no demuestra que sea segura: señala los requisitos insuficientes.
 - Para una auditoría amplia, divide el alcance en preguntas independientes y reutiliza las evidencias vigentes.
-- No lances todos los scanners ni encadenes varios auditores sobre el mismo objetivo. Incorpora herramientas adicionales solo cuando una necesidad concreta del trabajo lo justifique.
-- Usa `seguridad-revisor` como revisor habitual. Si el usuario solicita `appsec`, aprovecha ese agente en su lugar y evita revisar dos veces lo mismo.
+- No lances todos los scanners ni encadenes varios auditores sobre el mismo objetivo; añade una herramienta solo si una necesidad concreta lo justifica.
+- Usa `seguridad-revisor` como revisor habitual. Si el usuario pide `appsec`, usa ese agente en su lugar y evita revisar dos veces lo mismo.
 
 ## 4. Corregir y reutilizar evidencia
 
@@ -53,14 +49,23 @@ Una revisión anterior sigue siendo útil mientras conserven validez sus entrada
 
 Registra decisiones y evidencias en la conversación. Si se pide un informe o el trabajo necesita varias sesiones, el principal guarda un archivo local usando `{{CLAUDE_DIR}}/security/INFORME-REVISION.md`. Usa una ruta acordada del proyecto o, si no existe, una carpeta identificada por proyecto dentro de `{{CLAUDE_DIR}}/security/revisiones/`. Conserva el resultado del revisor y elimina secciones vacías; no abras otro agente para redactarlo. No generes un informe extenso por cada edición. No subas el perfil, informes, código ni evidencia, ni publiques comentarios en servicios externos.
 
-## 5. Eficiencia de uso y finalización
+## 5. Eficiencia y finalización
 
-El usuario trabaja normalmente con Opus y quiere eficiencia, no ahorro extremo. Optimiza por tarea correctamente resuelta: evita trabajo redundante, pero no reduzcas razonamiento, pruebas o cobertura cuando sean necesarios para seguridad y corrección. Principal y subagentes comparten límites de Pro, por lo que cada delegación debe justificar el trabajo que evita o la cobertura independiente que aporta.
+Optimiza por tarea correctamente resuelta: evita trabajo redundante, pero no reduzcas razonamiento, pruebas ni cobertura cuando sean necesarios para seguridad y corrección.
 
-El principal puede usar Opus para razonamiento, arquitectura y decisiones complejas. Usa `evidencia-haiku` para trabajo mecánico o acotado que pueda devolverse como evidencia reutilizable: localizar símbolos, mapear rutas, extraer resultados, clasificar archivos, reunir referencias o ejecutar comprobaciones cuyo objetivo ya esté definido. Usa herramientas directamente cuando ni siquiera haga falta interpretación. `seguridad-revisor` permanece en Sonnet para revisión independiente habitual; escala esa revisión a un modelo mayor solo cuando la complejidad del riesgo lo justifique. Los agentes `dev` y `appsec` conservan su configuración propia.
+Cada tarea va al modelo que su peso pide, y los subagentes llevan el suyo fijo: no heredan el del principal.
 
-Usa porcentaje consumido y hora de reinicio de sesión y semana solo si la plataforma los expone al agente o el usuario los facilita. Si no están disponibles, declara el cupo desconocido: no lo calcules desde tokens, dólares o `/context`. No consultes en bucle ni hagas llamadas a modelos para medir el consumo. Ante un aviso de límite próximo, prioriza verificaciones y cierre del alcance activo; conserva un resumen local breve con cambios, evidencia y siguiente paso antes de ampliar trabajo. Esta pauta no es un corte automático ni justifica omitir controles de seguridad.
+| Peso de la tarea | Quién | Modelo |
+| --- | --- | --- |
+| Mecánica: buscar, inventariar, extraer, comprobar algo ya definido | `evidencia-haiku` | Haiku |
+| Media: implementar un cambio acotado, revisar los controles de un cambio sensible | `dev`, `seguridad-revisor` | Sonnet |
+| Pesada: auditoría profunda, validar vulnerabilidades, cadenas de varios fallos | `appsec` | Opus |
+| Orquestar, planificar y decidir | agente principal | El de la sesión; lo elige el usuario y no se cambia por cuenta propia |
 
-Continúa una revisión limitada solo sobre lo pendiente. No declares un requisito cumplido si falta evidencia, falla una herramienta o se agota el límite. Completa trabajo autorizado y viable; comunica bloqueos materiales.
+Analiza la tarea y reparte pieza por pieza: delega lo que ahorra lectura o repetición o puede correr en paralelo; hazlo tú cuando es pequeño, ya tienes el contexto o explicarlo cuesta lo mismo. No subas un agente de nivel sin motivo ni lo bajes si la pieza exige más razonamiento.
 
-Al comparar configuraciones, usa tareas equivalentes desde el mismo estado y registra los modelos, esfuerzo, caché, resultado y cobertura. La medida principal es el cupo Pro consumido para terminar la tarea. Una variación de la barra puede incluir otras conversaciones o agentes simultáneos y está sujeta a redondeo; no la atribuyas íntegramente a una tarea sin comprobarlo. Tokens y estimaciones monetarias ayudan a diagnosticar, sin convertirse en un porcentaje exacto del plan.
+Usa `evidencia-haiku` para trabajo mecánico y acotado que pueda devolverse como evidencia reutilizable (localizar símbolos, mapear rutas, extraer resultados, ejecutar comprobaciones ya definidas). Usa herramientas directamente cuando no haga falta interpretación.
+
+Informa el consumo solo si la plataforma lo expone o el usuario lo da; no lo calcules a partir de tokens ni consultes en bucle. Si se acerca un límite, prioriza las verificaciones del alcance activo y deja un resumen breve de cambios, evidencia y siguiente paso. Esto no justifica omitir controles de seguridad.
+
+Continúa una revisión limitada solo sobre lo pendiente. No declares un requisito cumplido si falta evidencia, falla una herramienta o se agota un límite. Completa el trabajo autorizado y viable; comunica los bloqueos materiales.

@@ -1,7 +1,7 @@
 ---
 name: dev
 description: Autonomous senior software engineer for building complete applications, extending existing systems, debugging, integration, testing, and delivery. Use for implementation work (features, fixes, refactors, app builds, integrations) when the user asks for the dev agent or delegates engineering work. Optimized for fast, low-context, tool-driven execution.
-model: inherit
+model: sonnet
 ---
 
 # Dev

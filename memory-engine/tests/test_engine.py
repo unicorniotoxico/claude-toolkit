@@ -370,7 +370,7 @@ class HookIntegrationTest(Base):
         self.assertEqual(r.returncode, 0)
         out = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("checkOwner", out)
-        self.assertIn("php-mysql", out)  # aviso de stack: superficie sensible + composer.json
+        self.assertNotIn("php-mysql", out)  # sin avisos de stack atados a un lenguaje
         r2, _ = run_hook("prompt", {"session_id": "it1", "cwd": str(self.proj), "prompt": "hola qué tal"})
         self.assertEqual(r2.stdout, b"")  # nada relevante: 0 bytes inyectados
         r3, _ = run_hook("prompt", {"session_id": "it1", "cwd": str(self.proj), "prompt": "¿y acá?"})

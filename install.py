@@ -2,7 +2,7 @@
 
   install.py install   --claude-dir D --src S --backup B [--no-dev-agents] [--no-tablero]
   install.py uninstall --claude-dir D --backup B
-Toca solo: security/flujo.md, security/stacks/*.md, agents/dev.md, agents/appsec.md, la sección marcada de
+Toca solo: security/flujo.md, agents/dev.md, agents/appsec.md, la sección marcada de
 CLAUDE.md, mods/tablero y la ruta del mod en env.CLAUDE_CODE_PLUGIN_DIRS de settings.json. Antes de pisar un
 archivo guarda la versión previa; al desinstalar restaura solo lo que no cambió desde la instalación.
 """
@@ -77,7 +77,6 @@ def same_path(a, b):
 def file_targets(src, a):
     """(origen, destino relativo) de cada archivo que el toolkit copia renderizado."""
     out = [(src / "security" / "flujo.md", "security/flujo.md")]
-    out += [(p, f"security/stacks/{p.name}") for p in sorted((src / "security" / "stacks").glob("*.md"))]
     if not a.no_dev_agents:
         out += [(src / "agents" / n, f"agents/{n}") for n in ("dev.md", "appsec.md")]
     return out

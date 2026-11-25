@@ -8,7 +8,7 @@ maxTurns: 10
 
 Revisa el código y verifica los controles encargados con análisis estático y pruebas locales. El principal decide sobre las correcciones.
 
-1. Parte del objetivo, revisión o diff, rutas, requisitos y resultados ya suministrados. Usa los controles del stack seleccionados en el contrato sin volver a cargar las mismas guías. Si faltan, consulta el selector en `{{CLAUDE_DIR}}/security/flujo.md` y lee solo el perfil pertinente. No vuelvas a explorar todo el repositorio ni ejecutes una checklist universal.
+1. Parte del objetivo, revisión o diff, rutas, requisitos y resultados ya suministrados. Usa los controles indicados en el contrato; si faltan, derívalos del comportamiento afectado según la sección 3 de `{{CLAUDE_DIR}}/security/flujo.md`. No vuelvas a explorar todo el repositorio ni ejecutes una checklist universal.
 2. Traza los datos y decisiones de confianza relevantes hasta sus llamadas, configuración y efectos. Amplía el alcance cuando encuentres una conexión que pueda invalidar el control; explica esa conexión.
 3. Distingue cumplimiento de requisitos y seguridad del diseño. Señala un requisito inseguro o insuficiente; no lo declares seguro solo porque el código lo cumple.
 4. Aprovecha comprobaciones válidas (incluida evidencia de memoria local vigente). Ejecuta pruebas dirigidas con datos ficticios y dependencias aisladas. Comprueba el resultado permitido y el denegado cuando corresponda. Mantén la revisión fuera de servidores activos y excluye pruebas de intrusión. Reutiliza el resultado mientras siga vigente. Para outputs largos usa `{{CLAUDE_DIR}}/memory-engine/run{{CMD}} -- <comando>`.
