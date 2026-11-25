@@ -30,6 +30,7 @@ BATCH_SIZE = 256
 MAX_BRANCHES = 6
 CANDIDATES_PER_BRANCH = 8
 BROAD_MATCH = 32
+TOPIC_FOCUS = 0.5
 
 
 def index_batch(con):
@@ -58,14 +59,9 @@ def index_batch(con):
         con.executemany("DELETE FROM memory_topic_terms WHERE memory_id = ?", ((mid,) for mid in ids))
         associations = []
         for row in rows:
-            # The type is a broad category. Explicit topics may use a path such as A > B > C.
-            parts = [part for part in re.split(r"[>→]", row["topic"]) if part.strip()]
-            terms = {stem(word): 0 for word in words(row["type"].split("_", 1)[0])}
-            for i, part in enumerate(parts):
-                for word in words(part):
-                    terms[stem(word)] = 2 if i == len(parts) - 1 else 1
-            for word in words(row["aliases"]):
-                terms[stem(word)] = 2
+            terms = {}
+            for depth, level in levels(row):
+                terms.update(dict.fromkeys(level, depth))
             associations.extend((term, row["id"], depth) for term, depth in terms.items())
         con.executemany("INSERT INTO memory_topic_terms VALUES (?, ?, ?)", associations)
         con.executemany("DELETE FROM memory_topic_queue WHERE memory_id = ?", ((mid,) for mid in ids))
@@ -74,6 +70,25 @@ def index_batch(con):
         con.execute("ROLLBACK TO update_memory_topics")
         con.execute("RELEASE update_memory_topics")
         raise
+
+
+def levels(row):
+    """(depth, stems) per topic level, root first. The type is a broad category (depth 0);
+    an explicit topic may be a path such as A > B > C; aliases belong to the leaf (depth 2)."""
+    parts = [part for part in re.split(r"[>→]", row["topic"]) if part.strip()]
+    out = [(0, {stem(word) for word in words(row["type"].split("_", 1)[0])})]
+    out += [(1, {stem(word) for word in words(part)}) for part in parts[:-1]]
+    out.append((2, {stem(word) for word in words(parts[-1] if parts else "")} |
+                {stem(word) for word in words(row["aliases"])}))
+    return [(depth, level) for depth, level in out if level]
+
+
+def focused_depth(row, query_stems):
+    """Deepest topic level the query is about, or -1. A level counts only when the query
+    covers at least TOPIC_FOCUS of its terms: one prose word inside a long topic is noise."""
+    hits = [depth for depth, level in levels(row)
+            if len(level & query_stems) >= TOPIC_FOCUS * len(level)]
+    return max(hits, default=-1)
 
 
 def branches(con, query_words, limit):

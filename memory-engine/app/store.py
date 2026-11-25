@@ -331,6 +331,7 @@ def retrieve(con, signals, cfg, root=None, session=None, session_id=None, now=No
     pfiles, psyms = set(signals["files"]), set(signals["symbols"])
     sfiles = {Path(f).name.lower() for f in session.get("files", [])}
     ssyms = set(session.get("symbols", []))
+    stopics = {stem(t) for t in session.get("topic", [])}
     scored = []
     for r in candidate_rows.values():
         if r["validity_mode"] == "session_only" and (
@@ -346,8 +347,8 @@ def retrieve(con, signals, cfg, root=None, session=None, session_id=None, now=No
         # BM25 solo refuerza: con pocas memorias tiende a 0 (IDF) y con muchas premia coincidencias casuales.
         text = cov * (0.75 + 0.25 * (x / (x + mcfg["bm25_k"])))
         matches = branch_matches.get(r["id"], {})
-        depth = max((d for d in matches.values() if d is not None), default=-1)
-        # A direct topic hit is evidence for one part of a query, even if the other
+        depth = topics.focused_depth(r, qset) if matches else -1
+        # A focused topic hit is evidence for one part of a query, even if the other
         # query terms describe separate controls. Keep lower weight for ancestors.
         if depth >= 0:
             text = max(text, {0: 0.48, 1: 0.72, 2: 0.80}[depth])
@@ -356,8 +357,7 @@ def retrieve(con, signals, cfg, root=None, session=None, session_id=None, now=No
         f_file = 1.0 if mfiles & pfiles else 0.0
         f_sym = 1.0 if msyms & psyms else 0.0
         f_proj = 1.0 if (project and r["project"] == project) else 0.4
-        ttoks = {stem(t) for t in words(r["topic"] + " " + r["aliases"])}
-        f_topic = float(depth > 0 or bool(ttoks & (qset | {stem(t) for t in session.get("topic", [])})))
+        f_topic = float(depth > 0 or topics.focused_depth(r, qset | stopics) > 0)
         f_sess = 1.0 if (mfiles & sfiles or msyms & ssyms) else 0.0
         age_d = (now - r["last_verified_at"]) / 86400
         f_rec = math.pow(0.5, age_d / mcfg["recency_half_life_days"])

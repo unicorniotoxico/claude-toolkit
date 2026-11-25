@@ -261,6 +261,15 @@ class TopicRetrievalTest(Base):
                                    root=root, cross_project=False)
         self.assertEqual(scoped, [])
 
+    def test_one_prose_word_in_a_long_topic_is_not_evidence(self):
+        # Regresión: "buscando" en una pregunta coincidía con "/buscar" dentro de un tema-ruta
+        # y el piso de tema (0.80) inyectaba memorias sin relación con la consulta.
+        self.add(topic="FLUJO operaciones-comercializadas: GET /buscar?page&limit&se",
+                 fact="FLUJO operaciones-comercializadas 1/6 - GET /buscar con paginado por código o nombre")
+        prompt = "la base en fts5 está bien separada por temas o como estabas buscando que no aparecía nada"
+        self.assertEqual(self.ask(prompt)[0], [])
+        self.assertEqual(self.ask(prompt, root=self.proj.parent)[0], [])
+
     def test_unclassified_memory_can_be_found_by_exact_term(self):
         _, mid = self.add(topic="", fact="WebTransport está activo en el servidor de archivos")
         hits, _ = self.ask("WebTransport", root=self.proj.parent)
