@@ -3,6 +3,24 @@
 Todo local, solo stdlib (sqlite3 + FTS5), sin daemons, sin embeddings ni llamadas extra al modelo.
 Complementa el perfil existente (`CLAUDE.md`, `security/flujo.md`, `security/stacks/`, agentes).
 
+### Búsqueda por temas
+
+El campo de memoria topic admite jerarquías como **Seguridad > Web > Cabeceras > HSTS**.
+El campo aliases permite registrar nombres alternativos. Los nombres y las asociaciones son
+datos de la base, sin dependencia de la carpeta de trabajo.
+
+La búsqueda da prioridad a los recuerdos del proyecto actual y a la memoria global. Para
+los temas sin evidencia local, busca coincidencias en otros proyectos de la misma base.
+El resultado muestra el proyecto de origen y señala cuando la fuente registrada ya no
+está disponible. Configurá **memory.cross_project_topics** en **false** para limitar la
+búsqueda al proyecto actual y los recuerdos globales. **memory search --global-only**
+se limita a los recuerdos globales.
+
+La primera búsqueda de una base existente empieza a indexar los vínculos por lotes y
+guarda el progreso. Conserva los registros originales, incluidos sus IDs y fuentes.
+Las altas y las ediciones se incorporan al índice en las búsquedas siguientes.
+El motor comparte el buscador entre el hook, el CLI y los clientes que lo consultan por MCP.
+
 ## Arquitectura
 
 ```

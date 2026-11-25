@@ -17,6 +17,7 @@ DEFAULTS = {
         "threshold": 0.45,
         "min_text": 0.15,           # o coincidencia de archivo/símbolo
         "candidate_limit": 40,
+        "cross_project_topics": True,
         "bm25_k": 2.0,
         "stale_action": "exclude",  # exclude | flag
         "stale_penalty": 0.30,

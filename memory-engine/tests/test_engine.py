@@ -18,7 +18,7 @@ os.environ["MEMORY_ENGINE_HOME"] = str(TMP_HOME)
 sys.path.insert(0, str(ENGINE))
 shutil.copytree(ENGINE / "app", TMP_HOME / "app")
 
-from app import config, context, store  # noqa: E402
+from app import config, context, store, topics  # noqa: E402
 from app import hooks as hooks_mod  # noqa: E402
 from app.runlog import digest  # noqa: E402
 from app.secrets_filter import find_secret, is_sensitive_file  # noqa: E402
@@ -241,6 +241,74 @@ class RetrievalTest(Base):
         sel, st = self.ask("¿y acá?", session=session)
         self.assertTrue(st["ambiguous"])
         self.assertEqual(len(sel), 1)
+
+
+class TopicRetrievalTest(Base):
+    def test_multi_topic_search_from_outside_project(self):
+        _, vite = self.add(topic="Seguridad > Web > Build", aliases="Vite",
+                           fact="Vite sigue sirviendo assets desde el entorno de desarrollo")
+        _, cors = self.add(topic="Seguridad > Web > CORS",
+                           fact="CORS deja abierto el origen configurado en el gateway")
+        _, headers = self.add(topic="Seguridad > Web > Cabeceras", aliases="HSTS, CSP",
+                              fact="HSTS y CSP se revisaron en las cabeceras del proxy")
+        root = self.proj.parent
+        selected, _ = self.ask("Vite CORS HSTS CSP", root=root)
+        self.assertEqual({vite, cors, headers}, {item["row"]["id"] for item in selected})
+        block = store.format_block(selected, 450)
+        for mid in (vite, cors, headers):
+            self.assertIn(f"#{mid}", block)
+        scoped, _ = store.retrieve(self.con, context.extract("Vite CORS HSTS CSP"), self.cfg,
+                                   root=root, cross_project=False)
+        self.assertEqual(scoped, [])
+
+    def test_unclassified_memory_can_be_found_by_exact_term(self):
+        _, mid = self.add(topic="", fact="WebTransport está activo en el servidor de archivos")
+        hits, _ = self.ask("WebTransport", root=self.proj.parent)
+        self.assertEqual([mid], [item["row"]["id"] for item in hits])
+
+    def test_missing_file_is_a_history_hit_with_a_source_warning(self):
+        path = self.proj / "src" / "InvoiceController.php"
+        _, mid = self.add(topic="Seguridad > Web > HSTS", files="src/InvoiceController.php",
+                          validity="until_file_changes",
+                          fact="HSTS se configuró en la aplicación durante la revisión")
+        path.unlink()
+        hits, _ = self.ask("HSTS", root=self.proj.parent)
+        self.assertEqual(mid, hits[0]["row"]["id"])
+        self.assertIn("ya no existe", hits[0]["stale"])
+
+    def test_v1_upgrade_resumes_and_keeps_every_original_row(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "legacy.db"
+            old = sqlite3.connect(path, isolation_level=None)
+            old.row_factory = sqlite3.Row
+            old.executescript(store.SCHEMA + "PRAGMA user_version=1;")
+            for i in range(topics.BATCH_SIZE + 1):
+                old.execute("""INSERT INTO memories(id,type,topic,fact,fingerprint,created_at,
+                               updated_at,last_verified_at)
+                               VALUES (?, 'project_fact', 'Infra > Proxy', 'Proxy legado', ?, 0, 0, 0)""",
+                            (i + 1, str(i)))
+            before = [tuple(row) for row in old.execute("SELECT * FROM memories ORDER BY id")]
+            old.close()
+            con = store.connect(path)
+            topics.index_batch(con)
+            self.assertGreater(con.execute("SELECT cursor FROM memory_topic_backfill").fetchone()[0], 0)
+            con.close()
+            con = store.connect(path)
+            try:
+                topics.index_batch(con)
+                topics.index_batch(con)
+                self.assertEqual(con.execute("SELECT cursor FROM memory_topic_backfill").fetchone()[0], -1)
+                self.assertEqual(con.execute("SELECT count(*) FROM memory_topic_terms WHERE term='proxy'")
+                                 .fetchone()[0], len(before))
+                self.assertEqual(before, [tuple(row) for row in con.execute("SELECT * FROM memories ORDER BY id")])
+                con.execute("UPDATE memories SET topic='Infra > CORS' WHERE id=1")
+                topics.index_batch(con)
+                self.assertIsNotNone(con.execute("SELECT 1 FROM memory_topic_terms WHERE term='cors' AND memory_id=1")
+                                     .fetchone())
+                self.assertIsNone(con.execute("SELECT 1 FROM memory_topic_terms WHERE term='proxy' AND memory_id=1")
+                                  .fetchone())
+            finally:
+                con.close()
 
 
 class ParseTest(unittest.TestCase):
