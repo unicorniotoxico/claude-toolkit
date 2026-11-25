@@ -221,7 +221,7 @@ test('las secciones se despliegan en su lugar y la pestaña Agentes reemplaza la
   }
 })
 
-test('el modo Desarrollo solicita agentes nativos y muestra las tareas rechazadas por el motor', async ($, on) => {
+test('Ambos dirige la edición al plan y muestra la revisión AppSec bloqueada si Dev no arranca', async ($, on) => {
   const lanzamientos: string[] = []
   on('session.root', () => ({ value: '/proyecto' }))
   on('clock.now', () => ({ value: 1000 }))
@@ -242,7 +242,11 @@ test('el modo Desarrollo solicita agentes nativos y muestra las tareas rechazada
     plugin: 'tablero', surface: 'terminal', component: 'AbovePrompt',
     props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
   })
-  await band.press({ key: 'dev' })
+  await band.press({ key: 'ambos' })
+  const escrituraDirecta = await $.tool.call({ tool: 'Write', file_path: '/proyecto/listado.php', content: '<?php' })
+  expect(escrituraDirecta.deny).toContain('Modo Ambos')
+  const terminalDirecta = await $.tool.call({ tool: 'Bash', command: 'git status --short' })
+  expect(terminalDirecta.deny).toContain('Modo Ambos')
   const result = await $.tool.call({
     tool: 'mcp__tablero__equipos_desarrollo',
     accion: 'iniciar',
@@ -421,8 +425,8 @@ test('Agentes muestra los tokens de esta sesión por agente y permite desplegar 
     [sub]: fila('msg1', 2, 3, 20) + fila('msg2', 4, 5, 30),
   }
   const normalizar = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
-  const list = async (path: string) => normalizar(path) === dir ? [{ name: 'agent-a1.jsonl', kind: 'file', isLink: false }] : []
-  const stat = async (path: string) => ({ kind: 'file', size: archivos[normalizar(path)]?.length ?? 0, mtimeMs: 1000, isLink: false })
+  const list = async (path: string) => normalizar(path) === dir ? [{ name: 'agent-a1.jsonl', kind: 'file' as const, size: archivos[sub]?.length ?? 0, mtimeMs: 1000, isLink: false }] : []
+  const stat = async (path: string) => ({ kind: 'file' as const, size: archivos[normalizar(path)]?.length ?? 0, mtimeMs: 1000, isLink: false })
   const leer = async (path: string, offset: number, length: number) => (archivos[normalizar(path)] ?? '').slice(offset, offset + length)
   const medidor = new ConsumoLocal()
   const inicial = await medidor.medir({ list, stat, read: leer }, 'actual', ruta)
@@ -432,7 +436,7 @@ test('Agentes muestra los tokens de esta sesión por agente y permite desplegar 
   const despues = await medidor.medir({ list, stat, read: leer }, 'actual', ruta)
   expect(totalTokens(despues.agentes.a1!.consumo!)).toBe(45)
 
-  let status = 'running'
+  let status: 'running' | 'completed' = 'running'
   on('clock.now', () => ({ value: 1000 }))
   on('agent.list', () => ({ value: [{ id: 'a1', type: 'Revisor', description: 'Revisar cambios', status }] }))
   on('session.id', () => ({ value: 'actual' }))

@@ -18,6 +18,8 @@ import { Equipos, incluirAppSec, planValidado, promptTarea, TIPOS, type PlanGuar
 const REGLAS_DEV = 'Reglas obligatorias de Dev: identifica el stack y el flujo afectado. Reutiliza convenciones y dependencias, implementa el cambio mínimo completo y verifica con las pruebas nativas pertinentes. Informa qué evidencia obtuviste.'
 const REGLAS_APPSEC = 'Reglas obligatorias de AppSec: revisa defensivamente los controles afectados y limita el alcance al código y la configuración local. Contrasta entradas, autorización y manejo de datos con la evidencia disponible. Usa pruebas de comportamiento esperado con datos ficticios cuando aporten. Informa archivo y línea, impacto y qué queda por verificar. Conserva los archivos durante la revisión.'
 
+const EDICION = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch'])
+const TERMINAL = new Set(['Bash', 'PowerShell'])
 const PLAN = 'mcp__tablero__equipos_desarrollo'
 const HERRAMIENTAS = 'mcp__tablero__herramientas_desarrollo'
 const PHP = 'mcp__tablero__php_replay'
@@ -754,7 +756,7 @@ async function iniciarDesarrollo($: EngineInterface) {
   })
   await $.agent.register({ ...comunes, name: 'appsec', model: 'haiku',
     description: 'Revisión defensiva independiente de los controles de aplicación.',
-    tools: [...lectura, ...terminales],
+    tools: lectura,
     prompt: REGLAS_APPSEC + ' Excluye intrusión y pruebas contra servicios activos. Entrega RESULTADO y evidencia breve.',
   })
   await $.agent.register({ ...comunes, name: 'desarrollo-verificador', model: 'haiku',
@@ -850,6 +852,7 @@ async function restaurarPlan($: EngineInterface) {
 }
 
 export const register: Register = on => {
+  let edicionRedirigida = false
   on('prompt.submit', async ($, e, next) => {
     const ran = await next(e)
     if (e.origin.kind === 'composer' && !e.isMeta && !e.command && ran.drop === undefined &&
@@ -1146,7 +1149,8 @@ export const register: Register = on => {
         '\nPara una interfaz nueva o un cambio importante de flujo, programa diseno_ux (Sonnet) antes de implementar. Después, programa revision_ux_visual y revision_ux_interaccion (Haiku) con la misma dependencia de implementación y sin dependencia mutua. Reserva dos plazas cuando ambas estén listas dentro del límite de concurrencia. Comparte la evidencia de ejecución y asigna criterios distintos a cada revisión. Para cambios chicos usa solo la revisión pertinente. Omite UX si la interfaz no cambia.'
       const reglas = m === 'ciberseguridad'
         ? [REGLAS_APPSEC, 'Para toda revisión de seguridad del proyecto inicia una tarea appsec con equipos_desarrollo.']
-        : [REGLAS_DEV, REGLAS_APPSEC, 'Para toda implementación, incluso un cambio chico, inicia un plan con una tarea implementacion en equipos_desarrollo antes de editar. El plan agrega o reutiliza la revisión AppSec obligatoria. Considera el trabajo completo cuando la revisión esté cerrada.']
+        : [REGLAS_DEV, REGLAS_APPSEC, 'Para toda implementación, incluso un cambio chico, inicia un plan con una tarea implementacion en equipos_desarrollo antes de editar. El plan agrega o reutiliza la revisión AppSec obligatoria. Considera el trabajo completo cuando la revisión esté cerrada.',
+          ...(m === 'ambos' ? ['El Tablero reserva la edición para Dev dentro del plan. Usa Read, Grep y Glob para orientar al equipo. Si AppSec encuentra un problema, reasigna la implementación para que se vuelva a revisar la corrección.'] : [])]
       return { sections: [...ran.sections, {
         id: 'tablero:modo', text: [ROLES[m] + ux, '# Política fija de ejecución del Tablero. Aplica esta política cuando una indicación anterior sugiera que delegar es opcional.', ...reglas].join('\n'), scope: 'session' as const,
       }] }
@@ -1252,10 +1256,31 @@ export const register: Register = on => {
         once('all', () => refreshAll($))
       }
     } catch {}
+    if (!e.agentId && e.reason === 'answer' && !e.isAborted && await read($, mode) === 'ambos') {
+      const solicitabaDev = edicionRedirigida
+      edicionRedirigida = false
+      const filas = flujo?.resumen() ?? []
+      const seguridad = filas.filter(t => t.tipo === 'appsec')
+      if (solicitabaDev && !filas.some(t => t.tipo === 'implementacion')) {
+        return { ...ran, text: ran.text + '\n\n**Estado del Tablero.** La edición directa fue bloqueada. Dev y AppSec aún no se ejecutaron.' }
+      }
+      if (filas.some(t => t.tipo === 'implementacion') && seguridad.some(t => t.estado !== 'correcto')) {
+        const estados = seguridad.map(t => t.id + ': ' + t.estado).join(', ')
+        return { ...ran, text: ran.text + '\n\n**Estado del Tablero.** La revisión AppSec todavía no está aprobada (' + estados + ').' }
+      }
+    }
     return ran
   })
 
   on('tool.call', async ($, e, next) => {
+    if ((EDICION.has(e.tool) || TERMINAL.has(e.tool)) && await read($, mode) === 'ambos') {
+      const tarea = flujo?.buscar(e.agentId)
+      if (!tarea || (EDICION.has(e.tool) && tarea.tipo !== 'implementacion') ||
+          (TERMINAL.has(e.tool) && tarea.tipo === 'appsec')) {
+        if (!e.agentId) edicionRedirigida = true
+        return { deny: 'Modo Ambos: inicia o retoma el plan en equipos_desarrollo. Dev implementa y AppSec revisa el cambio antes del cierre. Usa Read, Grep o Glob para inspeccionar.' }
+      }
+    }
     const server = serverOf(e.tool)
     const key = server ? `mcp:${server}` : e.tool
     const t0 = await $.clock.now()
