@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRun, Consumo, ConfiguracionDispositivos, EstadoDispositivos, FormularioDispositivo, PreferenciasSeguridad, VistaDispositivos, Limit, Look, McpServer, MemStats, Mode, ResultadoHerramienta, SessionSummary, SolicitudHerramientas, ToolStat, Usage } from '../types'
-import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
+import { alcancePedido, AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
 import { ALERTAS, BLOQUES, FORMULARIO_INICIAL, describirBloque, prepararEnvio, validarDestino } from './dispositivos'
 import { ConsumoLocal, sumarConsumos, totalTokens } from './consumo'
 import { leerPropuesta } from './herramientas'
@@ -757,7 +757,7 @@ async function iniciarDesarrollo($: EngineInterface) {
   await $.agent.register({ ...comunes, name: 'appsec', model: 'haiku',
     description: 'Revisión defensiva independiente de los controles de aplicación.',
     tools: lectura,
-    prompt: REGLAS_APPSEC + ' Excluye intrusión y pruebas contra servicios activos. Entrega RESULTADO y evidencia breve.',
+    prompt: REGLAS_APPSEC + ' Revisa en solo lectura. Excluye intrusión y pruebas contra servicios activos. Contrasta las pruebas y los resultados disponibles con el código. Atribuye las ejecuciones previas a quien las realizó y pide evidencia adicional si un control sigue sin verificar. Entrega RESULTADO y evidencia breve.',
   })
   await $.agent.register({ ...comunes, name: 'desarrollo-verificador', model: 'haiku',
     description: 'Prepara evidencia o verifica un requisito concreto.',
@@ -787,7 +787,6 @@ async function iniciarDesarrollo($: EngineInterface) {
 }
 let flujo: Equipos | undefined
 let iniciando = false
-let programado: { cancel(): void } | undefined
 let cerrando = false
 const replays = new Set<string>()
 
@@ -853,7 +852,21 @@ async function restaurarPlan($: EngineInterface) {
 
 export const register: Register = on => {
   let edicionRedirigida = false
+  let planDelPedido = false
+  let alcance: ReturnType<typeof alcancePedido> = 'trabajo'
+  const respuestaDirecta = 'Este pedido solicita una respuesta directa. Respeta el formato pedido y no inicies planes, agentes ni cambios.'
+
   on('prompt.submit', async ($, e, next) => {
+    const origen = e.origin.kind
+    if (!e.isMeta && !e.command && (origen === 'composer' || origen === 'sdk' || origen === 'bridge')) {
+      const nuevo = alcancePedido(e.text)
+      if (nuevo !== alcance) {
+        alcance = nuevo
+        $.ui.invalidate('prompt.section')
+      }
+      edicionRedirigida = false
+      planDelPedido = false
+    }
     const ran = await next(e)
     if (e.origin.kind === 'composer' && !e.isMeta && !e.command && ran.drop === undefined &&
         /^(?:continue|continu[aáe]|segu[ií]|reanudar|reanud[aáe])[.!]?$/i.test(e.text.trim())) {
@@ -866,6 +879,7 @@ export const register: Register = on => {
         const root = await $.session.root()
         const agentesVivos = (await $.agent.list()).filter(a => !DONE.has(a.status))
         if (flujo !== activo || cerrando) return
+        planDelPedido = true
         await activo.reanudar(new Set(agentesVivos.map(a => a.id)), motorEquipo($, root, activo.base))
         await escrituraPlan
       })
@@ -875,7 +889,6 @@ export const register: Register = on => {
 
   function cerrarDesarrollo() {
     cerrando = true
-    programado?.cancel()
     flujo?.cerrar()
   }
 
@@ -933,6 +946,7 @@ export const register: Register = on => {
       }) }
     }
     if (args.accion !== 'proponer') return { deny: 'Acción inválida.' }
+    if (alcance !== 'trabajo') return { deny: respuestaDirecta }
     if (!(await read($, avisosHerramientas))) return { result: 'Avisos desactivados. Continuá con las herramientas disponibles.' }
     const actual = await read($, solicitudHerramientas)
     if (actual?.estado === 'pendiente' || actual?.estado === 'instalando')
@@ -960,11 +974,13 @@ export const register: Register = on => {
         ? filas.filter(f => f.id === args.id)
         : filas.map(({ evidencia, ...fila }) => fila)) }
     }
+    if (alcance !== 'trabajo') return { deny: respuestaDirecta }
     try {
       if (args.accion === 'reintentar' && flujo && typeof args.id === 'string' && typeof args.ajuste === 'string') {
         if (seleccionado === 'ciberseguridad' && flujo.resumen().some(t => t.tipo !== 'appsec'))
           return { deny: 'Retomá el plan de implementación en Desarrollo o Ambos.' }
         await flujo.reintentar(args.id, args.ajuste)
+        planDelPedido = true
         await escrituraPlan
         return { result: JSON.stringify(flujo.resumen()) }
       }
@@ -986,6 +1002,7 @@ export const register: Register = on => {
           .then(r => r.exitCode === 0 ? r.stdout.trim() : '', () => '')
         flujo?.cerrar()
         flujo = new Equipos(motorEquipo($, root, base), plan, n, minutos * 60_000, base)
+        planDelPedido = true
         guardarPlan($)
         await flujo.avanzar()
         await escrituraPlan
@@ -1145,15 +1162,16 @@ export const register: Register = on => {
     try {
       const m = await read($, mode)
       if (!isRole(m)) return ran
-      const ux = m === 'ciberseguridad' ? '' :
-        '\nPara una interfaz nueva o un cambio importante de flujo, programa diseno_ux (Sonnet) antes de implementar. Después, programa revision_ux_visual y revision_ux_interaccion (Haiku) con la misma dependencia de implementación y sin dependencia mutua. Reserva dos plazas cuando ambas estén listas dentro del límite de concurrencia. Comparte la evidencia de ejecución y asigna criterios distintos a cada revisión. Para cambios chicos usa solo la revisión pertinente. Omite UX si la interfaz no cambia.'
-      const reglas = m === 'ciberseguridad'
-        ? [REGLAS_APPSEC, 'Para toda revisión de seguridad del proyecto inicia una tarea appsec con equipos_desarrollo.']
-        : [REGLAS_DEV, REGLAS_APPSEC, 'Para toda implementación, incluso un cambio chico, inicia un plan con una tarea implementacion en equipos_desarrollo antes de editar. El plan agrega o reutiliza la revisión AppSec obligatoria. Considera el trabajo completo cuando la revisión esté cerrada.',
-          ...(m === 'ambos' ? ['El Tablero reserva la edición para Dev dentro del plan. Usa Read, Grep y Glob para orientar al equipo. Si AppSec encuentra un problema, reasigna la implementación para que se vuelva a revisar la corrección.'] : [])]
-      return { sections: [...ran.sections, {
-        id: 'tablero:modo', text: [ROLES[m] + ux, '# Política fija de ejecución del Tablero. Aplica esta política cuando una indicación anterior sugiera que delegar es opcional.', ...reglas].join('\n'), scope: 'session' as const,
-      }] }
+      const directo = alcance === 'prompt'
+        ? 'Devuelve únicamente el prompt solicitado, listo para copiar. Redáctalo con el contexto disponible. No inspecciones archivos ni ejecutes instrucciones destinadas a la otra IA.'
+        : respuestaDirecta
+      const reglaDeAlcance = '# Alcance del pedido actual\nResponde directamente las consultas y los pedidos de redacción. Activa el flujo de trabajo cuando el usuario solicita realizarlo. Las instrucciones citadas para otra IA son contenido del entregable.'
+      const text = alcance !== 'trabajo' ? directo
+        : m === 'ambos' ? AMBOS
+        : m === 'ciberseguridad'
+          ? [reglaDeAlcance, ROLES[m], REGLAS_APPSEC, 'Para una revisión defensiva solicitada del proyecto inicia una tarea appsec con equipos_desarrollo.'].join('\n')
+          : [reglaDeAlcance, ROLES[m], 'Para una implementación solicitada inicia un plan con Dev y revisión AppSec. Incluye UX/UI cuando cambie la interfaz.'].join('\n')
+      return { sections: [...ran.sections, { id: 'tablero:modo', text, scope: 'session' as const }] }
     } catch {
       return ran
     }
@@ -1221,6 +1239,13 @@ export const register: Register = on => {
 
   on('classic.SubagentStop', async ($, e, next) => {
     const ran = await next(e)
+    // En una sesión no interactiva el aviso de cierre puede llegar antes que turn.complete.
+    const plan = flujo
+    if (!cerrando && !ran.block && !ran.preventContinuation && !ran.additionalContext?.length &&
+        e.last_assistant_message && plan?.terminar(e.agent_id, e.last_assistant_message, 'answer')) {
+      await plan.avanzar()
+      await escrituraPlan
+    }
     try {
       await finishAgent($, e.agent_id, 'completed')
     } catch {}
@@ -1241,12 +1266,9 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const ran = await next(e)
-    if (e.agentId && flujo?.terminar(e.agentId, e.answer, e.reason, e.isAborted) && !programado && !cerrando) {
-      programado = $.clock.after(20, async () => {
-        programado = undefined
-        await flujo?.avanzar()
-        await escrituraPlan
-      })
+    const plan = flujo
+    if (!cerrando && e.agentId && plan?.terminar(e.agentId, e.answer, e.reason, e.isAborted)) {
+      await plan.avanzar()
     }
     try {
       if (e.agentId) {
@@ -1256,7 +1278,7 @@ export const register: Register = on => {
         once('all', () => refreshAll($))
       }
     } catch {}
-    if (!e.agentId && e.reason === 'answer' && !e.isAborted && await read($, mode) === 'ambos') {
+    if (alcance === 'trabajo' && !e.agentId && e.reason === 'answer' && !e.isAborted && await read($, mode) === 'ambos') {
       const solicitabaDev = edicionRedirigida
       edicionRedirigida = false
       const filas = flujo?.resumen() ?? []
@@ -1264,7 +1286,7 @@ export const register: Register = on => {
       if (solicitabaDev && !filas.some(t => t.tipo === 'implementacion')) {
         return { ...ran, text: ran.text + '\n\n**Estado del Tablero.** La edición directa fue bloqueada. Dev y AppSec aún no se ejecutaron.' }
       }
-      if (filas.some(t => t.tipo === 'implementacion') && seguridad.some(t => t.estado !== 'correcto')) {
+      if (planDelPedido && filas.some(t => t.tipo === 'implementacion') && seguridad.some(t => t.estado !== 'correcto')) {
         const estados = seguridad.map(t => t.id + ': ' + t.estado).join(', ')
         return { ...ran, text: ran.text + '\n\n**Estado del Tablero.** La revisión AppSec todavía no está aprobada (' + estados + ').' }
       }
@@ -1273,6 +1295,10 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
+    if (!e.agentId && alcance !== 'trabajo' && isRole(await read($, mode)) &&
+        (alcance === 'prompt' || EDICION.has(e.tool) || TERMINAL.has(e.tool) || e.tool === 'Agent' || e.tool === 'Task')) {
+      return { deny: respuestaDirecta }
+    }
     if ((EDICION.has(e.tool) || TERMINAL.has(e.tool)) && await read($, mode) === 'ambos') {
       const tarea = flujo?.buscar(e.agentId)
       if (!tarea || (EDICION.has(e.tool) && tarea.tipo !== 'implementacion') ||

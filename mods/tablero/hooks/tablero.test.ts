@@ -5,6 +5,21 @@ declare const setTimeout: (callback: () => void, ms: number) => unknown
 
 import { ConsumoLocal, totalTokens } from './consumo'
 import { mcpBlock, mergeAgents, parseMemStats, pickLimits, summarizeSessions } from './register'
+import { alcancePedido } from './roles'
+
+test('separa la redacción y las consultas de la implementación solicitada', () => {
+  const casos = [
+    ['En el Monitor, quiero mostrar la variación. Dame el prompt, no lo hagas vos.', 'prompt'],
+    ['Quiero solo el prompt para el Monitor.', 'prompt'],
+    ['¿Podés explicarme cómo se calcula la variación?', 'consulta'],
+    ['Contame cómo harías el cambio. No lo implementes.', 'consulta'],
+    ['Implementá la variación de precios en el listado lateral.', 'trabajo'],
+    ['Explicame el cálculo. Después implementá el cambio.', 'trabajo'],
+    ['Implementá el cambio. No ejecutes comandos externos.', 'trabajo'],
+    ['Implementá el cambio con este criterio:\n> Dame el prompt', 'trabajo'],
+  ] as const
+  for (const [pedido, alcance] of casos) expect(alcancePedido(pedido)).toBe(alcance)
+})
 
 test('un servidor MCP apagado bloquea solo sus herramientas', async () => {
   const off = ['mysql-db']
