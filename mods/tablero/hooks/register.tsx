@@ -6,7 +6,7 @@ import { AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
 import { ALERTAS, BLOQUES, FORMULARIO_INICIAL, describirBloque, prepararEnvio, validarDestino } from './dispositivos'
 import { ConsumoLocal, sumarConsumos, totalTokens } from './consumo'
 import { leerPropuesta } from './herramientas'
-import { Equipos, planValidado, promptTarea, TIPOS, type PlanGuardado } from './equipos'
+import { Equipos, incluirAppSec, planValidado, promptTarea, TIPOS, type PlanGuardado } from './equipos'
 
 // Qué se actualiza cómo:
 //  - por eventos: agentes (agent.spawn / classic.SubagentStop / turn.complete del subagente), herramientas y
@@ -14,6 +14,9 @@ import { Equipos, planValidado, promptTarea, TIPOS, type PlanGuardado } from './
 //  - por consulta: el consumo cada 2 s (esta sesión y las demás sesiones locales, que publican un archivo
 //    cada una), el reloj de las duraciones cada 1 s mientras haya agentes activos, y una conciliación de
 //    agentes y servidores MCP cada 30 s por si algo se cortó sin evento.
+
+const REGLAS_DEV = 'Reglas obligatorias de Dev: identifica el stack y el flujo afectado. Reutiliza convenciones y dependencias, implementa el cambio mínimo completo y verifica con las pruebas nativas pertinentes. Informa qué evidencia obtuviste.'
+const REGLAS_APPSEC = 'Reglas obligatorias de AppSec: revisa defensivamente los controles afectados y limita el alcance al código y la configuración local. Contrasta entradas, autorización y manejo de datos con la evidencia disponible. Usa pruebas de comportamiento esperado con datos ficticios cuando aporten. Informa archivo y línea, impacto y qué queda por verificar. Conserva los archivos durante la revisión.'
 
 const PLAN = 'mcp__tablero__equipos_desarrollo'
 const HERRAMIENTAS = 'mcp__tablero__herramientas_desarrollo'
@@ -699,7 +702,7 @@ async function configurarAvisos($: EngineInterface, activo: boolean) {
 
 async function iniciarDesarrollo($: EngineInterface) {
   await $.command.register({ name: 'equipos', immediate: true, description: 'Muestra los equipos y comprobaciones de Desarrollo' })
-  await $.tool.register({ name: 'equipos_desarrollo', description: 'Planifica y sigue equipos de Desarrollo. iniciar define tareas con dependencias, incluido diseño y revisión UX/UI; estado devuelve evidencia; reintentar reasigna un fallo concluido o una implementación que requiere corrección y vuelve a comprobar sus dependencias.',
+  await $.tool.register({ name: 'equipos_desarrollo', description: 'Planifica y sigue equipos de Desarrollo. iniciar define tareas; el toolkit agrega AppSec a toda implementación; estado devuelve evidencia; reintentar reasigna un fallo concluido o una implementación que requiere corrección y vuelve a comprobar sus dependencias.',
     inputSchema: {
       type: 'object', required: ['accion'], properties: {
         accion: { enum: ['iniciar', 'estado', 'reintentar'] },
@@ -747,7 +750,12 @@ async function iniciarDesarrollo($: EngineInterface) {
   await $.agent.register({ ...comunes, name: 'desarrollo-dev', model: 'sonnet', maxTurns: 24,
     description: 'Implementa una pieza del plan de Desarrollo.',
     tools: [...lectura, 'Edit', 'Write', ...terminales],
-    prompt: 'Implementas una sola tarea del orquestador. Respeta sus rutas y criterios. Consulta las etapas pertinentes de ub-mode y devuelve evidencia compacta.',
+    prompt: 'Implementas una sola tarea del orquestador. Respeta sus rutas y criterios. Consulta las etapas pertinentes de ub-mode. ' + REGLAS_DEV,
+  })
+  await $.agent.register({ ...comunes, name: 'appsec', model: 'haiku',
+    description: 'Revisión defensiva independiente de los controles de aplicación.',
+    tools: [...lectura, ...terminales],
+    prompt: REGLAS_APPSEC + ' Excluye intrusión y pruebas contra servicios activos. Entrega RESULTADO y evidencia breve.',
   })
   await $.agent.register({ ...comunes, name: 'desarrollo-verificador', model: 'haiku',
     description: 'Prepara evidencia o verifica un requisito concreto.',
@@ -808,7 +816,7 @@ function motorEquipo($: EngineInterface, root: string, base: string): Constructo
         revision_ux_visual: 'desarrollo-ux-visual', revision_ux_interaccion: 'desarrollo-ux-interaccion',
       } as const
       const tipo = t.tipo in agentesUX ? agentesUX[t.tipo as keyof typeof agentesUX] :
-        t.tipo === 'implementacion' ? 'desarrollo-dev' : t.simulacionPHP ? 'desarrollo-php' : 'desarrollo-verificador'
+        t.tipo === 'implementacion' ? 'desarrollo-dev' : t.tipo === 'appsec' ? 'appsec' : t.simulacionPHP ? 'desarrollo-php' : 'desarrollo-verificador'
       const instrucciones = t.tipo === 'implementacion'
         ? '\nGuía ub-mode: ' + $.plugin.root + '/skills/ub-mode/SKILL.md. Lee las fases pertinentes. Conserva la entrega local.'
         : ''
@@ -850,7 +858,7 @@ export const register: Register = on => {
         await restaurarPlan($)
         if (!flujo?.activo || cerrando) return
         const seleccion = await read($, mode)
-        if (seleccion !== 'desarrollo' && seleccion !== 'ambos') return
+        if (!isRole(seleccion) || (seleccion === 'ciberseguridad' && flujo.resumen().some(t => t.tipo !== 'appsec'))) return
         const activo = flujo
         const root = await $.session.root()
         const agentesVivos = (await $.agent.list()).filter(a => !DONE.has(a.status))
@@ -940,7 +948,7 @@ export const register: Register = on => {
 
   on('tool.run', { tool: PLAN }, async ($, e) => {
     const seleccionado = await read($, mode)
-    if (e.agentId || (seleccionado !== 'desarrollo' && seleccionado !== 'ambos')) return { deny: 'Solo el orquestador en Desarrollo o Ambos puede gestionar equipos.' }
+    if (e.agentId || !isRole(seleccionado)) return { deny: 'Elegí un modo del toolkit para gestionar equipos.' }
     await restaurarPlan($)
     const args = e as unknown as Record<string, unknown>
     if (args.accion === 'estado') {
@@ -951,6 +959,8 @@ export const register: Register = on => {
     }
     try {
       if (args.accion === 'reintentar' && flujo && typeof args.id === 'string' && typeof args.ajuste === 'string') {
+        if (seleccionado === 'ciberseguridad' && flujo.resumen().some(t => t.tipo !== 'appsec'))
+          return { deny: 'Retomá el plan de implementación en Desarrollo o Ambos.' }
         await flujo.reintentar(args.id, args.ajuste)
         await escrituraPlan
         return { result: JSON.stringify(flujo.resumen()) }
@@ -959,7 +969,10 @@ export const register: Register = on => {
       if (flujo?.activo || iniciando) return { deny: 'Ya hay un plan en curso.' }
       iniciando = true
       try {
-        const plan = planValidado(args.tareas)
+        const tareas = planValidado(args.tareas)
+        if (seleccionado === 'ciberseguridad' && tareas.some(t => t.tipo !== 'appsec'))
+          return { deny: 'Usá tareas AppSec para la revisión defensiva en este modo.' }
+        const plan = incluirAppSec(tareas)
         const n = args.concurrencia ?? 2
         const minutos = args.minutos ?? 10
         if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 3 ||
@@ -1020,6 +1033,7 @@ export const register: Register = on => {
     }
   })
 
+  on('agent.offer', { agent: 'tablero:appsec' }, () => ({ isOffered: false }))
   on('agent.offer', { agent: 'tablero:desarrollo-dev' }, () => ({ isOffered: false }))
   on('agent.offer', { agent: 'tablero:desarrollo-verificador' }, () => ({ isOffered: false }))
   on('agent.offer', { agent: 'tablero:desarrollo-ux' }, () => ({ isOffered: false }))
@@ -1130,7 +1144,12 @@ export const register: Register = on => {
       if (!isRole(m)) return ran
       const ux = m === 'ciberseguridad' ? '' :
         '\nPara una interfaz nueva o un cambio importante de flujo, programa diseno_ux (Sonnet) antes de implementar. Después, programa revision_ux_visual y revision_ux_interaccion (Haiku) con la misma dependencia de implementación y sin dependencia mutua. Reserva dos plazas cuando ambas estén listas dentro del límite de concurrencia. Comparte la evidencia de ejecución y asigna criterios distintos a cada revisión. Para cambios chicos usa solo la revisión pertinente. Omite UX si la interfaz no cambia.'
-      return { sections: [...ran.sections, { id: 'tablero:modo', text: ROLES[m] + ux, scope: 'session' as const }] }
+      const reglas = m === 'ciberseguridad'
+        ? [REGLAS_APPSEC, 'Para toda revisión de seguridad del proyecto inicia una tarea appsec con equipos_desarrollo.']
+        : [REGLAS_DEV, REGLAS_APPSEC, 'Para toda implementación, incluso un cambio chico, inicia un plan con una tarea implementacion en equipos_desarrollo antes de editar. El plan agrega o reutiliza la revisión AppSec obligatoria. Considera el trabajo completo cuando la revisión esté cerrada.']
+      return { sections: [...ran.sections, {
+        id: 'tablero:modo', text: [ROLES[m] + ux, '# Política fija de ejecución del Tablero. Aplica esta política cuando una indicación anterior sugiera que delegar es opcional.', ...reglas].join('\n'), scope: 'session' as const,
+      }] }
     } catch {
       return ran
     }

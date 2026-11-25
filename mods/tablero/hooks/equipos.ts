@@ -1,4 +1,4 @@
-export const TIPOS = ['preparacion', 'implementacion', 'verificacion', 'integracion', 'diseno_ux', 'revision_ux', 'revision_ux_visual', 'revision_ux_interaccion'] as const
+export const TIPOS = ['preparacion', 'implementacion', 'verificacion', 'integracion', 'diseno_ux', 'revision_ux', 'revision_ux_visual', 'revision_ux_interaccion', 'appsec'] as const
 type Tipo = typeof TIPOS[number]
 type Estado = 'en cola' | 'en curso' | 'correcto' | 'falló' | 'pendiente' | 'bloqueado' | 'pausada'
 
@@ -43,8 +43,8 @@ function coincide(a: string, b: string) {
   return x === y || x.startsWith(y + '/') || y.startsWith(x + '/')
 }
 
-export function planValidado(input: unknown): Tarea[] {
-  if (!Array.isArray(input) || input.length < 1 || input.length > LIMITE_TAREAS)
+export function planValidado(input: unknown, guardado = false): Tarea[] {
+  if (!Array.isArray(input) || input.length < 1 || input.length > LIMITE_TAREAS + Number(guardado))
     throw new Error('Declará entre 1 y ' + LIMITE_TAREAS + ' tareas.')
   const ids = new Set<string>()
   const tareas: Tarea[] = []
@@ -55,7 +55,7 @@ export function planValidado(input: unknown): Tarea[] {
     const depende = item.depende ?? []
     const archivos = item.archivos ?? []
     const tipo = item.tipo as Tipo
-    if (!enLista(depende) || !enLista(archivos) || archivos.length > 20 || !archivos.every(rutaValida))
+    if (!enLista(depende) || !enLista(archivos) || archivos.length > (guardado && tipo === 'appsec' ? LIMITE_TAREAS * 20 : 20) || !archivos.every(rutaValida))
       throw new Error(item.id + ': dependencias o rutas inválidas.')
     if (tipo === 'implementacion' && !archivos.length)
       throw new Error(item.id + ': declara las rutas que puede editar el agente.')
@@ -72,6 +72,21 @@ export function planValidado(input: unknown): Tarea[] {
     if (anterior === resueltas.size) throw new Error('El plan contiene una dependencia inexistente o circular.')
   }
   return tareas
+}
+
+export function incluirAppSec(tareas: Tarea[]): Tarea[] {
+  const implementaciones = tareas.filter(t => t.tipo === 'implementacion')
+  if (!implementaciones.length) return tareas
+  const depende = implementaciones.map(t => t.id)
+  const archivos = [...new Set(implementaciones.flatMap(t => t.archivos))]
+  if (tareas.some(t => t.tipo === 'appsec' && depende.every(id => t.depende.includes(id)) &&
+      archivos.every(archivo => t.archivos.includes(archivo)))) return tareas
+  let id = 'appsec-cierre'
+  while (tareas.some(t => t.id === id)) id += '-1'
+  return [...tareas, {
+    id, equipo: 'AppSec', tipo: 'appsec', depende, archivos, simulacionPHP: false,
+    objetivo: 'Revisa los cambios implementados en las rutas indicadas y registra evidencia de los controles afectados.',
+  }]
 }
 
 interface Motor {
@@ -99,7 +114,7 @@ export class Equipos {
   }
 
   static restaurar(motor: Motor, copia: PlanGuardado) {
-    const plan = new Equipos(motor, planValidado(copia.tareas), copia.max, copia.checkpoint, copia.base)
+    const plan = new Equipos(motor, planValidado(copia.tareas, true), copia.max, copia.checkpoint, copia.base)
     for (const t of copia.tareas) Object.assign(plan.tareas.get(t.id)!, t)
     return plan
   }
@@ -273,6 +288,7 @@ export function promptTarea(t: Tarea, evidencia: string) {
     revision_ux: 'Recorre la interfaz implementada y compara las acciones principales con el diseño y los criterios. Si no hay vista ejecutable, identifica lo observado por lectura y declara pendiente la validación visual.',
     revision_ux_visual: 'Compara la interfaz renderizada con el diseño. Revisa jerarquía, tipografía, contraste, espaciado, desbordes y comportamiento en tamaños relevantes. Registra la pantalla y los tamaños observados. Si no hay vista ejecutable, declara pendiente la validación visual.',
     revision_ux_interaccion: 'Recorre las acciones principales. Comprueba navegación, teclado y foco, nombres accesibles, confirmaciones y recuperación de errores. Registra el recorrido y el resultado observado. Si solo puedes leer el código, declara pendiente lo que requiere ejecución.',
+    appsec: 'Revisa los controles afectados en el diff y la configuración local. Sigue los datos hasta el control y usa evidencia existente. Informa ubicación, impacto y verificación pendiente cuando aplique.',
     integracion: 'Comprueba únicamente cómo encajan las piezas y el recorrido integrado. Reutiliza la evidencia de las pruebas de cada equipo.',
   }[t.tipo]
   return [

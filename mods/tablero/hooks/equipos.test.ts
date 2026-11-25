@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { Equipos, planValidado, promptTarea, type Tarea } from './equipos'
+import { Equipos, incluirAppSec, planValidado, promptTarea, type Tarea } from './equipos'
 
 const tarea = (id: string, otros: Partial<Tarea> = {}): Tarea => ({
   id, equipo: id, tipo: 'implementacion', objetivo: 'Criterio verificable',
@@ -164,4 +164,20 @@ test('las dos revisiones UX arrancan en paralelo después de implementar', async
   await plan.avanzar()
   expect(lanzadas).toEqual(['diseno', 'api', 'ui', 'visual', 'interaccion'])
   expect(plan.resumen().filter(t => t.estado === 'en curso').map(t => t.id)).toEqual(['visual', 'interaccion'])
+})
+
+
+test('AppSec revisa todas las implementaciones aunque el plan no lo mencione', async () => {
+  const tareas = incluirAppSec([tarea('uno'), tarea('dos')])
+  expect(incluirAppSec(tareas)).toEqual(tareas)
+  const { plan, lanzadas } = correr(tareas)
+  await plan.avanzar()
+  expect(lanzadas).toEqual(['uno', 'dos'])
+  plan.terminar('uno', 'RESULTADO: OK', 'answer')
+  await plan.avanzar()
+  expect(lanzadas).toEqual(['uno', 'dos'])
+  plan.terminar('dos', 'RESULTADO: OK', 'answer')
+  await plan.avanzar()
+  expect(lanzadas).toEqual(['uno', 'dos', 'appsec-cierre'])
+  expect(plan.buscar('appsec-cierre')?.archivos).toEqual(['uno.php', 'dos.php'])
 })

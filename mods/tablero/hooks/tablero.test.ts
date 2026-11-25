@@ -106,6 +106,7 @@ test('elegir un modo agrega su rol al prompt de sistema', async ($, on) => {
   expect(sections[1]?.text).toContain('Modo de la sesión: Ciberseguridad')
   expect(sections[1]?.text).toContain('revisor defensivo de código')
   expect(sections[1]?.text).toContain('pruebas automatizadas locales')
+  expect(sections[1]?.text).toContain('Reglas obligatorias de AppSec')
   expect(sections[1]?.scope).toBe('session')
   expect((await pane.find({ type: 'Text', text: /^Modo/ }))?.text).toContain('Ciberseguridad')
   // la barra se cierra tras elegir
@@ -258,6 +259,7 @@ test('el modo Desarrollo solicita agentes nativos y muestra las tareas rechazada
     'tablero:desarrollo-dev', 'tablero:desarrollo-ux', 'tablero:desarrollo-ux-visual', 'tablero:desarrollo-ux-interaccion',
   ])
   expect(JSON.stringify(result.result)).toContain('bloqueado')
+  expect(JSON.stringify(result.result)).toContain('appsec-cierre')
   await pane.press({ key: 'tab:agentes' })
   expect((await pane.find({ type: 'Text', text: /Catálogo · catalogo/ }))?.text).toContain('pendiente')
 })
