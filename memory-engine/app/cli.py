@@ -26,13 +26,14 @@ def cmd_search(a, cfg):
     root = context.find_root(a.cwd) if not a.global_only else None
     con = store.connect()
     signals = context.extract(a.text)
-    scored, st = store.retrieve(con, signals, cfg, root=root, explain=True)
+    scored, st = store.retrieve(con, signals, cfg, root=root, explain=True,
+                                cross_project=not a.global_only)
     print(f"términos={signals} candidatos={st['candidates']} umbral={cfg['memory']['threshold']}")
     for score, gate, r, feats in scored[: a.limit]:
         mark = "✓" if gate and score >= cfg["memory"]["threshold"] else " "
         print(f"{mark} {score:.3f} {_row_line(r)}\n         {feats}")
     if a.inject:
-        sel, _ = store.retrieve(con, signals, cfg, root=root)
+        sel, _ = store.retrieve(con, signals, cfg, root=root, cross_project=not a.global_only)
         print("\n--- bloque que se inyectaría ---\n" + (store.format_block(sel, cfg["memory"]["max_chars"]) or "(nada)"))
 
 

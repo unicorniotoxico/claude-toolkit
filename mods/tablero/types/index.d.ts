@@ -1,3 +1,14 @@
+export type Consumo = {
+  entrada: number
+  salida: number
+  cacheCreada: number
+  cacheLeida: number
+}
+export type ConsumoSesion = {
+  principal?: Consumo
+  agentes: Record<string, { consumo?: Consumo; modelo?: string }>
+  parcial: boolean
+}
 export type Usage = {
   usd?: number
   ctxPercent?: number
@@ -8,6 +19,15 @@ export type Usage = {
   limitsAt?: number
 }
 export type Limit = { kind: string; percentUsed: number; resetsAt?: string }
+export type EquipoFila = {
+  id: string
+  equipo: string
+  tipo: string
+  estado: string
+  demorada?: boolean
+  agente?: string
+  verificacion?: string
+}
 export type ToolStat = { calls: number; errors: number; lastMs: number; lastError?: string }
 export type McpServer = { name: string; tools: number }
 export type AgentRun = {
@@ -42,13 +62,59 @@ export type Look = {
 export type Mode = 'ciberseguridad' | 'desarrollo' | 'ambos' | 'ninguno'
 export type MemStats ={ active: number; stale: number; prompts: number; injected: number; hookP95: number; error?: string }
 
+export type Herramienta = {
+  nombre: string
+  motivo: string
+  gestor: 'winget' | 'brew' | 'apt' | 'go'
+  paquete: string
+  ejecutable: string
+}
+export type ResultadoHerramienta = {
+  estado: 'disponible' | 'error' | 'pendiente'
+  ruta?: string
+  detalle?: string
+}
+export type SolicitudHerramientas = {
+  herramientas: Herramienta[]
+  estado: 'pendiente' | 'instalando' | 'omitida' | 'finalizada'
+  oculta?: boolean
+  resultados?: Array<Herramienta & ResultadoHerramienta>
+}
+
+export type FormularioDispositivo = {
+  host: string; puerto: string; huella: string; codigo: string; proyecto: string
+  valor: string; revision: string; minutos: string; coincide: boolean
+  bloque: 'status' | 'test_result' | 'work_request'
+}
+export type VistaDispositivos = 'inicio' | 'usar' | 'permisos' | 'enviar' | 'actividad' | 'identidad' | 'red' | 'activar' | 'agregar' | 'invitar' | 'destino' | 'archivos' | 'cert-solicitud' | 'cert-firmar'
+export type ConfiguracionDispositivos = {
+  cert: string; clave: string; autoridad: string; ip: string; puerto: string; origenes: string
+}
+export type EstadoCertificados = {
+  archivo: string; huella: string; huellaAutoridad: string; entrada: string; confirmada: boolean
+}
+export type EstadoDispositivos = {
+  puedeFirmar?: boolean
+  conexion?: { estado: 'sin_configurar' | 'invalida' | 'configurada'; huella?: string; puerto?: number; direccion?: string }
+
+  enabled: boolean
+  pending: Array<[string, number]>
+  grants: Array<[string, string, string, string, number]>
+  inbox: Array<[string, string, string]>
+  alerts: Array<[string, string, number, number]>
+}
+export type PreferenciasSeguridad = { monitor: boolean; rdp: boolean; salida: boolean; puerto: boolean }
+
 declare module 'claude-code' {
   interface PluginState {
     tablero: {
       usage: Usage | null
+      consumoAgentes: ConsumoSesion | null
+      detallesConsumo: string[]
       tools: Record<string, ToolStat>
       mcp: McpServer[]
       agents: Record<string, AgentRun>
+      equipos: EquipoFila[]
       sessions: SessionSummary[]
       mem: MemStats | null
       updatedAt: number
@@ -62,6 +128,23 @@ declare module 'claude-code' {
       mcpOff: string[]
       /** lista de sesiones cerradas o inactivas desplegada */
       showIdle: boolean
+      avisosHerramientas: boolean
+      solicitudHerramientas: SolicitudHerramientas | null
+      detallesHerramientas: string[]
+      excluidasHerramientas: string[]
+      seccionesAbiertas: string[]
+      tab: 'general' | 'agentes' | 'dispositivos' | 'preferencias'
+      estadoDispositivos: EstadoDispositivos | null
+      preferenciasSeguridad: PreferenciasSeguridad
+      estadoMonitor: string
+      envioDispositivo: string[]
+      vistaDispositivo: VistaDispositivos
+      formularioDispositivo: FormularioDispositivo
+      peerDispositivo: string
+      codigoDispositivo: string
+      mensajeDispositivo: string
+      configuracionDispositivos: ConfiguracionDispositivos
+      certificadosDispositivos: EstadoCertificados
     }
   }
 }

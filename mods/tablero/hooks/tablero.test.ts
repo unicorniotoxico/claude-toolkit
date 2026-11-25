@@ -1,7 +1,25 @@
 import type { RenderElement } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
+declare const setTimeout: (callback: () => void, ms: number) => unknown
+
+import { ConsumoLocal, totalTokens } from './consumo'
 import { mcpBlock, mergeAgents, parseMemStats, pickLimits, summarizeSessions } from './register'
+import { alcancePedido } from './roles'
+
+test('separa la redacción y las consultas de la implementación solicitada', () => {
+  const casos = [
+    ['En el Monitor, quiero mostrar la variación. Dame el prompt, no lo hagas vos.', 'prompt'],
+    ['Quiero solo el prompt para el Monitor.', 'prompt'],
+    ['¿Podés explicarme cómo se calcula la variación?', 'consulta'],
+    ['Contame cómo harías el cambio. No lo implementes.', 'consulta'],
+    ['Implementá la variación de precios en el listado lateral.', 'trabajo'],
+    ['Explicame el cálculo. Después implementá el cambio.', 'trabajo'],
+    ['Implementá el cambio. No ejecutes comandos externos.', 'trabajo'],
+    ['Implementá el cambio con este criterio:\n> Dame el prompt', 'trabajo'],
+  ] as const
+  for (const [pedido, alcance] of casos) expect(alcancePedido(pedido)).toBe(alcance)
+})
 
 test('un servidor MCP apagado bloquea solo sus herramientas', async () => {
   const off = ['mysql-db']
@@ -29,10 +47,16 @@ test('clic sobre un servidor MCP lo apaga y lo prende', async ($, on) => {
   })
   await ui.press({ key: 'actualizar' })
   const row = async () => (await ui.find({ key: 'mcp:mysql-db' }))?.text ?? ''
+  expect(await row()).toBe('')
+  await ui.press({ key: 'seccion:mcp' })
   expect(await row()).toContain('1 tools')
   await ui.press({ key: 'mcp:mysql-db' })
   expect(await row()).toContain('apagado')
   await ui.press({ key: 'mcp:mysql-db' })
+  expect(await row()).toContain('1 tools')
+  await ui.press({ key: 'seccion:mcp' })
+  expect(await row()).toBe('')
+  await ui.press({ key: 'seccion:mcp' })
   expect(await row()).toContain('1 tools')
 })
 
@@ -87,7 +111,7 @@ test('elegir un modo agrega su rol al prompt de sistema', async ($, on) => {
     plugin: 'tablero',
     surface: 'terminal',
     component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+    props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
   })
   expect(await band.find({ type: 'Text', text: /Para qué es esta sesión/ })).toBeDefined()
   await band.press({ key: 'ciber' })
@@ -95,6 +119,9 @@ test('elegir un modo agrega su rol al prompt de sistema', async ($, on) => {
   const sections = (await $.prompt.compose(ask)).sections
   expect(sections.map(s => s.id)).toEqual(['intro', 'tablero:modo'])
   expect(sections[1]?.text).toContain('Modo de la sesión: Ciberseguridad')
+  expect(sections[1]?.text).toContain('revisor defensivo de código')
+  expect(sections[1]?.text).toContain('pruebas automatizadas locales')
+  expect(sections[1]?.text).toContain('Reglas obligatorias de AppSec')
   expect(sections[1]?.scope).toBe('session')
   expect((await pane.find({ type: 'Text', text: /^Modo/ }))?.text).toContain('Ciberseguridad')
   // la barra se cierra tras elegir
@@ -109,6 +136,7 @@ test('la apariencia se cambia desde el panel', async $ => {
     requestId: 'tablero',
     props: { title: 'Tablero', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
   })
+  await ui.press({ key: 'seccion:apariencia' })
   const label = async (key: string) => (await ui.find({ key }))?.text ?? ''
   expect(await label('tema')).toContain('tema claude')
   await ui.press({ key: 'tema' })
@@ -162,7 +190,7 @@ test('parsea la salida de memory.cmd stats', async () => {
   expect(parseMemStats(out)).toEqual({ active: 15, stale: 1, prompts: 68, injected: 1, hookP95: 313 })
 })
 
-test('el panel dibuja sus secciones en terminal y desktop', async $ => {
+test('las secciones se despliegan en su lugar y la pestaña Agentes reemplaza la vista General', async $ => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const props = {
       title: 'Tablero',
@@ -173,13 +201,279 @@ test('el panel dibuja sus secciones en terminal y desktop', async $ => {
       view: {},
     } as const
     const ui = await $.ui.mount({ plugin: 'tablero', surface, component: 'Pane', props, requestId: 'tablero' })
-    expect(await ui.find({ type: 'Text', text: /Esta sesión/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Sesiones locales/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /No hay otras sesiones/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Memory-engine/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Todavía no se lanzó ninguno/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Sin lectura todavía/ })).toBeDefined()
-    expect(await ui.find({ type: 'Button' })).toBeDefined()
+    const secciones = [
+      ['sesion', /Costo:/],
+      ['cuenta', /Sin lectura todavía/],
+      ['sesiones', /No hay otras sesiones/],
+      ['mcp', /Sin servidores MCP/],
+      ['herramientas', /Todavía ninguna/],
+      ['memoria', /Cargando/],
+      ['apariencia', /tema claude/],
+    ] as const
+    for (const [id, texto] of secciones) {
+      expect(await ui.find({ key: `seccion:${id}` })).toBeDefined()
+      expect(await ui.find({ text: texto })).toBeUndefined()
+      await ui.press({ key: `seccion:${id}` })
+      expect(await ui.find({ text: texto })).toBeDefined()
+      expect(await ui.find({ key: 'seccion:sesiones' })).toBeDefined()
+      await ui.press({ key: `seccion:${id}` })
+      expect(await ui.find({ text: texto })).toBeUndefined()
+    }
+    await ui.press({ key: 'seccion:sesion' })
+    await ui.press({ key: 'seccion:cuenta' })
+    expect(await ui.find({ text: /Costo:/ })).toBeDefined()
+    expect(await ui.find({ text: /Sin lectura todavía/ })).toBeDefined()
+    await ui.press({ key: 'seccion:sesion' })
+    await ui.press({ key: 'seccion:cuenta' })
+    await ui.press({ key: 'tab:agentes' })
+    expect(await ui.find({ key: 'seccion:mcp' })).toBeUndefined()
+    expect(await ui.find({ key: 'seccion:sesion' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /No hay subagentes activos/ })).toBeDefined()
+    await ui.press({ key: 'tab:general' })
+    expect(await ui.find({ key: 'seccion:mcp' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /No hay subagentes activos/ })).toBeUndefined()
     await ui.unmount()
   }
+})
+
+test('Ambos dirige la edición al plan y muestra la revisión AppSec bloqueada si Dev no arranca', async ($, on) => {
+  const lanzamientos: string[] = []
+  on('session.root', () => ({ value: '/proyecto' }))
+  on('clock.now', () => ({ value: 1000 }))
+  on('agent.spawn', (_$, e) => {
+    lanzamientos.push((e as unknown as { subagent_type?: string }).subagent_type ?? '')
+    return { deny: 'Motor de prueba sin agentes vivos' }
+  })
+  on('process.run', () => ({ value: { exitCode: 0, stdout: 'a'.repeat(40), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', ($, e) => h($.ui.resolve(e).Box, {}) as RenderElement)
+  const pane = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 50 }, view: {} },
+  })
+  await pane.press({ key: 'cambiar-modo' })
+  const band = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+  })
+  await band.press({ key: 'ambos' })
+  const escrituraDirecta = await $.tool.call({ tool: 'Write', file_path: '/proyecto/listado.php', content: '<?php' })
+  expect(escrituraDirecta.deny).toContain('Modo Ambos')
+  const terminalDirecta = await $.tool.call({ tool: 'Bash', command: 'git status --short' })
+  expect(terminalDirecta.deny).toContain('Modo Ambos')
+  const result = await $.tool.call({
+    tool: 'mcp__tablero__equipos_desarrollo',
+    accion: 'iniciar',
+    tareas: [
+      { id: 'catalogo', equipo: 'Catálogo', tipo: 'implementacion', objetivo: 'Listar dinosaurios', archivos: ['listado.php'] },
+      { id: 'ficha', equipo: 'Ficha', tipo: 'diseno_ux', objetivo: 'Definir el diseño de la ficha' },
+      { id: 'visual', equipo: 'Visual', tipo: 'revision_ux_visual', objetivo: 'Revisar contraste y tamaños' },
+      { id: 'interaccion', equipo: 'Interacción', tipo: 'revision_ux_interaccion', objetivo: 'Revisar teclado y navegación' },
+      { id: 'integrar', equipo: 'Integración', tipo: 'integracion', objetivo: 'Abrir el detalle de un resultado', depende: ['ficha', 'catalogo'] },
+    ],
+  })
+  expect(result.deny).toBeUndefined()
+  expect(lanzamientos).toEqual([
+    'tablero:desarrollo-dev', 'tablero:desarrollo-ux', 'tablero:desarrollo-ux-visual', 'tablero:desarrollo-ux-interaccion',
+  ])
+  expect(JSON.stringify(result.result)).toContain('bloqueado')
+  expect(JSON.stringify(result.result)).toContain('appsec-cierre')
+  await pane.press({ key: 'tab:agentes' })
+  expect((await pane.find({ type: 'Text', text: /Catálogo · catalogo/ }))?.text).toContain('pendiente')
+})
+
+test('el aviso detalla cada paquete, permite omitir y se puede silenciar', async ($, on) => {
+  let ejecuciones = 0
+  on('clock.after', () => ({ value: undefined }))
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 1000 }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('process.run', () => {
+    ejecuciones++
+    return { value: { exitCode: 0, stdout: '{"estado":"disponible","ruta":"/prueba/gdb"}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('ui.render', ($, e) => h($.ui.resolve(e).Box, {}) as RenderElement)
+  const pane = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 50 }, view: {} },
+  })
+  await pane.press({ key: 'cambiar-modo' })
+  const band = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+  })
+  await band.press({ key: 'dev' })
+
+  const herramienta = { nombre: 'GDB', gestor: 'apt', paquete: 'gdb', ejecutable: 'gdb', motivo: 'Inspeccionar dónde falla la prueba local.' }
+  const propuesta = { tool: 'mcp__tablero__herramientas_desarrollo' as const, accion: 'proponer', herramientas: [herramienta] }
+  const estado = async () => String((await $.tool.call({ tool: propuesta.tool, accion: 'estado' })).result)
+  const invalida = await $.tool.call({ ...propuesta, herramientas: [{ ...herramienta, paquete: 'gdb-' }] })
+  expect(invalida.isError).toBe(true)
+  await $.tool.call(propuesta)
+  expect(await pane.find({ text: /Inspeccionar/ })).toBeUndefined()
+  await pane.press({ key: 'detalle:apt:gdb' })
+  expect(await pane.find({ text: /Inspeccionar/ })).toBeDefined()
+  expect(ejecuciones).toBe(0)
+  await pane.press({ key: 'seleccionar:apt:gdb' })
+  expect(await pane.find({ key: 'herramientas:instalar' })).toBeUndefined()
+  await pane.press({ key: 'seleccionar:apt:gdb' })
+  expect(await pane.find({ key: 'herramientas:instalar' })).toBeDefined()
+
+  expect((await pane.find({ key: 'herramientas:omitir' }))?.text).toContain('esta vez')
+  expect((await pane.find({ key: 'herramientas:silenciar' }))?.text).toContain('Continuar sin preguntar')
+  await pane.press({ key: 'herramientas:omitir' })
+  expect(await estado()).toContain('"avisos":true')
+  expect(await estado()).toContain('"estado":"omitida"')
+  expect(await pane.find({ key: 'herramientas:instalar' })).toBeUndefined()
+  await $.tool.call(propuesta)
+  await pane.press({ key: 'herramientas:silenciar' })
+  expect(await estado()).toContain('"avisos":false')
+  expect(String((await $.tool.call(propuesta)).result)).toContain('Avisos desactivados')
+  expect(await pane.find({ key: 'herramientas:instalar' })).toBeUndefined()
+
+  await pane.press({ key: 'seccion:apariencia' })
+  await pane.press({ key: 'herramientas:avisos' })
+  expect(await estado()).toContain('"avisos":true')
+  expect(ejecuciones).toBe(0)
+  await $.tool.call({ ...propuesta, herramientas: [herramienta, { ...herramienta, nombre: 'LLDB', paquete: 'lldb', ejecutable: 'lldb' }] })
+  await pane.press({ key: 'seleccionar:apt:lldb' })
+  await pane.press({ key: 'herramientas:instalar' })
+  await new Promise<void>(resolve => setTimeout(resolve, 150))
+  const resultado = await estado()
+  expect(resultado).toContain('/prueba/gdb')
+  expect(resultado).not.toContain('lldb')
+  expect(ejecuciones).toBe(1)
+})
+
+test('Dispositivos explica el estado y prepara un envío antes de confirmarlo', async ($, on) => {
+  const peer = 'a'.repeat(64)
+  const calls: string[][] = []
+  on('process.run', (_$, e) => {
+    const op = e as unknown as { argv: string[] }
+    const action = op.argv[4] ?? ''
+    calls.push([action])
+    return { value: {
+      exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false,
+      stdout: action === 'send' ? '{"status":202}' : JSON.stringify({
+        enabled: true, conexion: { estado: 'configurada', huella: peer, puerto: 4321 },
+        pending: [], grants: [], inbox: [], alerts: [],
+      }),
+    } }
+  })
+  const ui = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 42, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  })
+  await ui.press({ key: 'tab:dispositivos' })
+  expect(await ui.find({ text: /Enlace habilitado/ })).toBeDefined()
+  await ui.press({ key: 'dispositivos:agregar' })
+  await ui.press({ key: 'dispositivos:usar' })
+  expect(await ui.find({ key: 'dispositivo:codigo' })).toBeUndefined()
+  await ui.press({ key: 'dispositivos:paso-destino' })
+  expect(await ui.find({ text: /Ingresá la dirección/ })).toBeDefined()
+  await ui.input({ key: 'dispositivo:destino:host', text: '192.168.1.10', kind: 'submit' })
+  await ui.input({ key: 'dispositivo:destino:puerto', text: '4321', kind: 'submit' })
+  await ui.input({ key: 'dispositivo:destino:huella', text: peer, kind: 'submit' })
+  await ui.press({ key: 'dispositivos:coincide-destino' })
+  await ui.press({ key: 'dispositivos:paso-destino' })
+  await ui.input({ key: 'dispositivo:codigo', text: 'b'.repeat(32), kind: 'submit' })
+  await ui.press({ key: 'dispositivos:previa' })
+  expect(await ui.find({ text: 'Vista previa' })).toBeDefined()
+  expect(calls.flat()).not.toContain('send')
+  await ui.press({ key: 'dispositivos:enviar' })
+  expect(calls.flat()).toContain('send')
+  expect(await ui.find({ text: /La otra PC tiene que aprobarla/ })).toBeDefined()
+})
+
+test('Agregar dispositivo desbloquea red solo después de validar los certificados', async ($, on) => {
+  const calls: string[] = []
+  on('process.run', (_$, e) => {
+    const action = (e as unknown as { argv: string[] }).argv[4] ?? ''
+    calls.push(action)
+    return { value: {
+      exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false,
+      stdout: action === 'snapshot' ? '{"enabled":false,"conexion":{"estado":"sin_configurar"},"pending":[],"grants":[],"inbox":[],"alerts":[]}' : '{"ok":true}',
+    } }
+  })
+  const ui = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 42, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  })
+  await ui.press({ key: 'tab:dispositivos' })
+  expect(await ui.find({ text: /Agregar dispositivo/ })).toBeDefined()
+  expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeUndefined()
+  await ui.press({ key: 'dispositivos:agregar' })
+  expect(await ui.find({ key: 'dispositivos:crear-ca' })).toBeDefined()
+  expect(await ui.find({ key: 'dispositivos:crear-solicitud' })).toBeDefined()
+  expect(calls).not.toContain('crear-autoridad')
+  await ui.press({ key: 'dispositivos:usar-archivos' })
+  expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeDefined()
+  expect(await ui.find({ key: 'dispositivo:config:ip' })).toBeUndefined()
+  await ui.press({ key: 'dispositivos:atras' })
+  expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeUndefined()
+  expect(await ui.find({ text: 'Identidad de esta PC' })).toBeDefined()
+  await ui.press({ key: 'dispositivos:usar-archivos' })
+  await ui.press({ key: 'dispositivos:paso' })
+  expect(await ui.find({ text: /Completá los tres archivos/ })).toBeDefined()
+  expect(calls).not.toContain('check-identity')
+  for (const [key, value] of [['cert', '/test/cert.pem'], ['clave', '/test/key.pem'], ['autoridad', '/test/ca.pem']])
+    await ui.input({ key: 'dispositivo:config:' + key, text: value ?? '', kind: 'submit' })
+  await ui.press({ key: 'dispositivos:paso' })
+  expect(calls).toContain('check-identity')
+  expect(await ui.find({ key: 'dispositivo:config:ip' })).toBeDefined()
+  expect(await ui.find({ key: 'dispositivo:config:cert' })).toBeUndefined()
+  expect(calls).not.toContain('start-gateway')
+})
+
+test('Agentes muestra los tokens de esta sesión por agente y permite desplegar el desglose', async ($, on) => {
+  const ruta = '/claude/proyecto/actual.jsonl'
+  const dir = '/claude/proyecto/actual/subagents'
+  const sub = dir + '/agent-a1.jsonl'
+  const fila = (id: string, entrada: number, salida: number, cache: number, sessionId = 'actual') =>
+    JSON.stringify({ type: 'assistant', sessionId, message: { id, model: 'haiku',
+      usage: { input_tokens: entrada, output_tokens: salida, cache_read_input_tokens: cache } } }) + '\n'
+  const archivos: Record<string, string> = {
+    [ruta]: fila('msg1', 2, 0, 20) + fila('msg1', 2, 3, 20) + fila('otro', 900, 900, 900, 'ajena'),
+    [sub]: fila('msg1', 2, 3, 20) + fila('msg2', 4, 5, 30),
+  }
+  const normalizar = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+  const list = async (path: string) => normalizar(path) === dir ? [{ name: 'agent-a1.jsonl', kind: 'file' as const, size: archivos[sub]?.length ?? 0, mtimeMs: 1000, isLink: false }] : []
+  const stat = async (path: string) => ({ kind: 'file' as const, size: archivos[normalizar(path)]?.length ?? 0, mtimeMs: 1000, isLink: false })
+  const leer = async (path: string, offset: number, length: number) => (archivos[normalizar(path)] ?? '').slice(offset, offset + length)
+  const medidor = new ConsumoLocal()
+  const inicial = await medidor.medir({ list, stat, read: leer }, 'actual', ruta)
+  expect(totalTokens(inicial.principal!)).toBe(25)
+  expect(totalTokens(inicial.agentes.a1!.consumo!)).toBe(39)
+  archivos[sub] += fila('msg3', 1, 2, 3)
+  const despues = await medidor.medir({ list, stat, read: leer }, 'actual', ruta)
+  expect(totalTokens(despues.agentes.a1!.consumo!)).toBe(45)
+
+  let status: 'running' | 'completed' = 'running'
+  on('clock.now', () => ({ value: 1000 }))
+  on('agent.list', () => ({ value: [{ id: 'a1', type: 'Revisor', description: 'Revisar cambios', status }] }))
+  on('session.id', () => ({ value: 'actual' }))
+  on('session.info', () => ({ value: { transcriptPath: ruta } }))
+  on('fs.list', async (_$, e) => ({ value: await list(e.path) }))
+  on('fs.stat', async (_$, e) => ({ value: await stat(e.path) }))
+  on('fs.read', async (_$, e) => ({ value: await leer(e.path, e.offset ?? 0, e.length ?? 0) }))
+  const ui = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 42, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  })
+  await ui.press({ key: 'tab:agentes' })
+  const consumoPrincipal = await ui.find({ key: 'consumo:principal' })
+  expect(consumoPrincipal?.text ?? (await ui.find({ text: /Todavía no hay tokens registrados|Leyendo el registro local/ }))?.text).toContain('25 tokens')
+  expect((await ui.find({ key: 'consumo:a1' }))?.text).toContain('45 tokens')
+  await ui.press({ key: 'consumo:a1' })
+  expect(await ui.find({ text: /Entrada nueva 5 · Salida 7/ })).toBeDefined()
+  expect(await ui.find({ text: /Caché escrita 0 · Leída 33/ })).toBeDefined()
+  status = 'completed'
+  await ui.press({ key: 'tab:general' })
+  await ui.press({ key: 'tab:agentes' })
+  expect(await ui.find({ key: 'consumo:a1' })).toBeUndefined()
+  expect(await ui.find({ text: 'No hay subagentes activos.' })).toBeDefined()
+  expect(await ui.find({ text: '70 tokens registrados' })).toBeDefined()
 })

@@ -1,8 +1,26 @@
 # memory-engine — memoria lateral, contexto de sesión y outputs acotados para Claude Code
 
 Todo local, solo stdlib (sqlite3 + FTS5), sin daemons, sin embeddings ni llamadas extra al modelo.
-Complementa el perfil existente (`CLAUDE.md`, `security/flujo.md`, `security/stacks/`, agentes).
+Complementa el perfil existente (`CLAUDE.md`, `security/flujo.md`, agentes).
 
+
+### Búsqueda por temas
+
+El campo de memoria topic admite jerarquías como **Seguridad > Web > Cabeceras > HSTS**.
+El campo aliases permite registrar nombres alternativos. Los nombres y las asociaciones son
+datos de la base, sin dependencia de la carpeta de trabajo.
+
+La búsqueda da prioridad a los recuerdos del proyecto actual y a la memoria global. Para
+los temas sin evidencia local, busca coincidencias en otros proyectos de la misma base.
+El resultado muestra el proyecto de origen y señala cuando la fuente registrada ya no
+está disponible. Configurá **memory.cross_project_topics** en **false** para limitar la
+búsqueda al proyecto actual y los recuerdos globales. **memory search --global-only**
+se limita a los recuerdos globales.
+
+La primera búsqueda de una base existente empieza a indexar los vínculos por lotes y
+guarda el progreso. Conserva los registros originales, incluidos sus IDs y fuentes.
+Las altas y las ediciones se incorporan al índice en las búsquedas siguientes.
+El motor comparte el buscador entre el hook, el CLI y los clientes que lo consultan por MCP.
 ## Arquitectura
 
 ```
@@ -14,7 +32,6 @@ UserPromptSubmit ──► .venv/python -I app/hooks.py prompt          (proceso
    │                   ├─ FTS5 (candidatos) ─► ranking híbrido ─► umbral ─► vigencia (solo candidatos)
    │                   ├─ 0–3 recuerdos ≤ 1400 chars   (nada relevante = 0 bytes)
    │                   ├─ contexto de sesión           (solo si el prompt es breve y anafórico: "¿y acá?")
-   │                   └─ aviso de stack               (solo superficie sensible, una vez por sesión)
    ▼
 Claude (Opus) ── evidencia-haiku (Haiku): búsqueda/inventario acotado
    │          └─ seguridad-revisor (Sonnet): revisión independiente de controles afectados
@@ -34,7 +51,7 @@ Cero CPU/RAM en reposo: no hay procesos residentes. SQLite se abre solo durante 
 | --- | --- |
 | `app/hooks.py` | hooks `prompt` / `stop`; failure-safe (todo error → exit 0, sin salida; se registra solo el tipo de error) |
 | `app/store.py` | esquema, FTS5, alta + dedupe, ranking, vigencia, formato inyectado |
-| `app/context.py` | proyecto/git sin lanzar git, extracción de términos, session context, detección de stack |
+| `app/context.py` | proyecto/git sin lanzar git, extracción de términos, session context |
 | `app/secrets_filter.py` | patrones deny + entropía; archivos sensibles nunca se leen (ni para hashear) |
 | `app/cli.py` | `memory` (Windows: `memory.cmd`) |
 | `app/runlog.py` | `run` (Windows: `run.cmd`) |
@@ -94,7 +111,6 @@ olvidados de más de 30 días y stale de más de 90 días.
 { "enabled": true,                      // todo el sistema (también: variable CLAUDE_MEMORY_DISABLED=1)
   "memory": { "enabled": true, "retrieve": true, "store": true, ... },
   "session_context": { "enabled": true },
-  "stack_hints": { "enabled": true },
   "security_review": { "enabled": true }, // false → inyecta: "no abras seguridad-revisor; el principal verifica"
   "subagents": { "enabled": true },       // false → inyecta: "no abras subagentes"
   "metrics": { "enabled": true } }

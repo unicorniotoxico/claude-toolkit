@@ -87,16 +87,6 @@ def on_prompt(data, cfg):
         parts.append("Contexto de sesión (prompt breve): " + " · ".join(bits)[:480])
         metric["sess"] = 1
 
-    if cfg["stack_hints"]["enabled"] and context.SENSITIVE.search(prompt):
-        hinted = session.get("hinted", [])
-        new = [s for s in context.detect_stacks(root) if s not in hinted]
-        if new:
-            paths = ", ".join(str(config.STACKS_DIR / f"{s}.md").replace("\\", "/") for s in new)
-            parts.append(f"Superficie posiblemente sensible. Stack detectado: {', '.join(new)}. "
-                         f"Si el cambio toca controles, lee solo los IDs pertinentes de: {paths}")
-            session["hinted"] = hinted + new
-            metric["hint"] = new
-
     if scfg["enabled"]:
         branch, _ = context.git_info(root)
         session.update(project=str(root), branch=branch or "")

@@ -17,6 +17,7 @@ DEFAULTS = {
         "threshold": 0.45,
         "min_text": 0.15,           # o coincidencia de archivo/símbolo
         "candidate_limit": 40,
+        "cross_project_topics": True,
         "bm25_k": 2.0,
         "stale_action": "exclude",  # exclude | flag
         "stale_penalty": 0.30,
@@ -32,7 +33,6 @@ DEFAULTS = {
     },
     "session_context": {"enabled": True, "ttl_hours": 24, "max_files": 10, "max_symbols": 12,
                         "ambiguous_max_words": 3},
-    "stack_hints": {"enabled": True},
     "security_review": {"enabled": True},
     "subagents": {"enabled": True},
     "metrics": {"enabled": True},
@@ -71,4 +71,3 @@ SESSIONS = DATA / "session"
 LOGS = HOME / "logs"
 RUNS = LOGS / "runs"
 METRICS = LOGS / "metrics.jsonl"
-STACKS_DIR = Path(os.environ.get("CLAUDE_HOME") or Path.home() / ".claude") / "security" / "stacks"

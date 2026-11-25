@@ -1,4 +1,5 @@
 # datos y estado locales: nunca se comparten
+.tdd/
 memory-engine/.venv/
 memory-engine/data/
 memory-engine/logs/

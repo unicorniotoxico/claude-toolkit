@@ -171,17 +171,6 @@ def file_hash(path):
     return h.hexdigest()[:16]
 
 
-STACK_MARKERS = {
-    "php-mysql": ("composer.json", "artisan", "index.php", "wp-config.php"),
-    "javascript-typescript": ("package.json", "tsconfig.json", "deno.json"),
-    "python": ("pyproject.toml", "requirements.txt", "setup.py", "Pipfile", "manage.py"),
-}
-
-
-def detect_stacks(root):
-    return [s for s, marks in STACK_MARKERS.items() if any((root / m).exists() for m in marks)]
-
-
 SENSITIVE = re.compile(
     r"(?i)\b(auth\w*|autoriz\w*|autentic\w*|login|logout|sesi[oó]n|session|cookie|csrf|jwt|token|oauth|password|contrase[nñ]a|permis\w*|"
     r"rol(es)?|role|ownership|owner|idor|acl|sql|query|consulta|mysql|inyecci[oó]n|injection|upload|subida|archivo|"
