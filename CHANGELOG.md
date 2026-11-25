@@ -3,6 +3,13 @@
 ## 1.6.0
 - Equipos de Desarrollo con dependencias, concurrencia acotada, puntos de control e integración de ub-mode.
 - Verificación diferencial independiente de PHP fuera de Apache con Docker sin red.
+- Tablero: navegación por secciones, pestaña Agentes, tokens de la sesión y de los subagentes activos, y aprobación de instalación de herramientas desde el panel.
+- Flujo Dev y AppSec por defecto, con revisión UX/UI en paralelo cuando cambia la interfaz. Los equipos interrumpidos se retoman al continuar.
+- El Tablero distingue consultas y pedidos de redacción de los pedidos de trabajo: responde directo sin iniciar planes, agentes ni cambios.
+- Dispositivos: enlace privado mTLS entre PCs propias, asistente paso a paso con certificados locales, permisos por proyecto y bloque con vencimiento, y auditoría local. Ver `mods/tablero/scripts/DEVICES.md`.
+- Ciberseguridad enfocada en revisión defensiva de código. Los controles se derivan del comportamiento (`security/flujo.md`); se quitan las guías por stack y su aviso automático.
+- Agentes `appsec` (Opus) y `dev` (Sonnet) con modelo fijo.
+- Memoria: indexación por temas y subtemas. Una coincidencia de tema cuenta solo si la consulta cubre al menos la mitad de los términos de ese nivel, para que una palabra suelta no inyecte recuerdos sin relación.
 
 ## 1.5.0
 - Multiplataforma: Windows, macOS y Linux. La instalación, la actualización, `doctor` y la desinstalación pasan a `toolkit.py` y `memory-engine/engine.py` (solo biblioteca estándar). `install.ps1` / `uninstall.ps1` quedan como lanzadores en Windows, con los mismos parámetros; en macOS/Linux, `install.sh` / `uninstall.sh` (`--no-dev-agents`, `--no-tablero`, `--toolkit-dir`, `--claude-dir`).
