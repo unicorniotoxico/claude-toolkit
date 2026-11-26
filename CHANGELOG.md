@@ -1,5 +1,10 @@
 # Cambios
 
+## 1.7.0
+- Dispositivos: los campos del asistente guardan lo escrito sin apretar Enter, así que Siguiente envía y valida lo que se ve. Antes respondía "Completá la IP, el puerto y los origenes" con los campos llenos.
+- Modo Desarrollo: antes de editar, usar la terminal o lanzar agentes hay que iniciar el plan en `equipos_desarrollo` con el reparto de la tarea. El modo Ambos mantiene su regla.
+- ub-mode: Crapper, Dryer y Mutator se resuelven con las herramientas del stack. Si falta alguna, se propone desde el panel con su motivo y forma de instalación para que el usuario la autorice.
+
 ## 1.6.0
 - Equipos de Desarrollo con dependencias, concurrencia acotada, puntos de control e integración de ub-mode.
 - Verificación diferencial independiente de PHP fuera de Apache con Docker sin red.
