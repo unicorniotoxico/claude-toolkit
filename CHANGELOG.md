@@ -1,5 +1,8 @@
 # Cambios
 
+## 1.6.2
+- Modo Desarrollo: antes de editar, usar la terminal o lanzar agentes hay que iniciar el plan en `equipos_desarrollo` con el reparto de la tarea. El modo Ambos mantiene su regla.
+
 ## 1.6.1
 - Dispositivos: los campos del asistente guardan lo escrito sin apretar Enter, así que Siguiente envía y valida lo que se ve. Antes respondía "Completá la IP, el puerto y los origenes" con los campos llenos.
 

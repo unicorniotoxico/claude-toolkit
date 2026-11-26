@@ -1310,6 +1310,11 @@ export const register: Register = on => {
         return { deny: 'Modo Ambos: inicia o retoma el plan en equipos_desarrollo. Dev implementa y AppSec revisa el cambio antes del cierre. Usa Read, Grep o Glob para inspeccionar.' }
       }
     }
+    if (!e.agentId && alcance === 'trabajo' &&
+        (EDICION.has(e.tool) || TERMINAL.has(e.tool) || e.tool === 'Agent' || e.tool === 'Task') &&
+        await read($, mode) === 'desarrollo' && !(planDelPedido || flujo?.activo)) {
+      return { deny: 'Modo Desarrollo: antes de editar, usar la terminal o lanzar agentes, analizá la tarea pieza por pieza e iniciá el plan con equipos_desarrollo (acción iniciar) indicando qué delegar y qué hacés vos. Usa Read, Grep o Glob para inspeccionar.' }
+    }
     const server = serverOf(e.tool)
     const key = server ? `mcp:${server}` : e.tool
     const t0 = await $.clock.now()
