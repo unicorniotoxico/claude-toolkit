@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import socketserver
 import sqlite3
 import ssl
 import subprocess
@@ -181,6 +182,11 @@ class Gateway(HTTPServer):
         if not (1024 <= cfg["port"] <= 65535 or (bind.is_loopback and cfg["port"] == 0)):
             raise ValueError("Puerto fuera de rango.")
         super().__init__((str(bind), cfg["port"]), Handler)
+
+    def server_bind(self):
+        # HTTPServer.server_bind llama a socket.getfqdn(), que tarda ~5 s con IP LAN en Windows.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     def get_request(self):
         sock, addr = super().get_request()

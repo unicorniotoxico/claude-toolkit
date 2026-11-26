@@ -99,6 +99,24 @@ class DevicePolicyTest(unittest.TestCase):
                     server.shutdown()
                     worker.join()
 
+    @unittest.skipUnless(OPENSSL, "openssl required for ephemeral test certificates")
+    def test_bind_does_not_resolve_dns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            identidad = create_identity(folder, True)
+            cfg = dict(ca=identidad["ca"], cert=identidad["cert"], key=identidad["key"],
+                       bind="127.0.0.1", port=0, allow=["127.0.0.1"])
+            calls = []
+            original = gateway.socket.getfqdn
+            gateway.socket.getfqdn = lambda *args: calls.append(args) or "lento.invalid"
+            try:
+                with gateway.Gateway(cfg, folder) as server:
+                    self.assertEqual(server.server_name, "127.0.0.1")
+                    self.assertEqual(server.server_port, server.server_address[1])
+            finally:
+                gateway.socket.getfqdn = original
+            self.assertEqual(calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()
