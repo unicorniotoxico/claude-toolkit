@@ -1,5 +1,8 @@
 # Cambios
 
+## 1.6.4
+- Dispositivos: el receptor inicia con una IP de la red local. Antes, la búsqueda de nombre al arrancar tardaba unos 5 s en Windows y el panel respondía "No se pudo iniciar el receptor. Revisá la IP y que el puerto esté libre".
+
 ## 1.6.3
 - ub-mode: Crapper, Dryer y Mutator se resuelven con las herramientas del stack. Si falta alguna, se propone desde el panel con su motivo y forma de instalación para que el usuario la autorice.
 
