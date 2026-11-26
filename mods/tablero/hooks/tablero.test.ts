@@ -283,6 +283,41 @@ test('Ambos dirige la edición al plan y muestra la revisión AppSec bloqueada s
   expect((await pane.find({ type: 'Text', text: /Catálogo · catalogo/ }))?.text).toContain('pendiente')
 })
 
+test('Desarrollo exige iniciar el plan antes de editar o usar la terminal en el hilo principal', async ($, on) => {
+  on('session.root', () => ({ value: '/proyecto' }))
+  on('clock.now', () => ({ value: 1000 }))
+  on('agent.spawn', () => ({ deny: 'Motor de prueba sin agentes vivos' }))
+  on('tool.call', () => ({ result: 'ok' }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: 'a'.repeat(40), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', ($, e) => h($.ui.resolve(e).Box, {}) as RenderElement)
+  const pane = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 50 }, view: {} },
+  })
+  await pane.press({ key: 'cambiar-modo' })
+  const band = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+  })
+  await band.press({ key: 'dev' })
+  const escritura = await $.tool.call({ tool: 'Write', file_path: '/proyecto/listado.php', content: '<?php' })
+  expect(escritura.deny).toContain('Modo Desarrollo')
+  const terminal = await $.tool.call({ tool: 'Bash', command: 'git status --short' })
+  expect(terminal.deny).toContain('Modo Desarrollo')
+  const agente = await $.tool.call({ tool: 'Agent', description: 'Editar listado', subagent_type: 'general-purpose', prompt: 'Editar listado.php' })
+  expect(agente.deny).toContain('Modo Desarrollo')
+  const plan = await $.tool.call({
+    tool: 'mcp__tablero__equipos_desarrollo',
+    accion: 'iniciar',
+    tareas: [{ id: 'catalogo', equipo: 'Catálogo', tipo: 'implementacion', objetivo: 'Listar dinosaurios', archivos: ['listado.php'] }],
+  })
+  expect(plan.deny).toBeUndefined()
+  const tras = await $.tool.call({ tool: 'Write', file_path: '/proyecto/listado.php', content: '<?php' })
+  expect(tras.deny).toBeUndefined()
+})
+
 test('el aviso detalla cada paquete, permite omitir y se puede silenciar', async ($, on) => {
   let ejecuciones = 0
   on('clock.after', () => ({ value: undefined }))
