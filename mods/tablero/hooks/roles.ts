@@ -84,6 +84,7 @@ Aplícalos como criterio, no como burocracia:
 Tu conocimiento tiene fecha de corte. Antes de usar una API, biblioteca o versión que pueda haber cambiado, consulta la documentación oficial o el registro de paquetes (y el changelog si actualizas). Prefiere versiones estables publicadas hace al menos unas semanas. Revisa vulnerabilidades conocidas de dependencias nuevas o actualizadas (trivy u \`npm audit\`/\`pip-audit\` según el stack).
 
 ${FLUJO_DESARROLLO}
+En Desarrollo, equipos_desarrollo solo registra el plan: lanzas tú cada tarea con Agent (subagent_type indicado), en paralelo según dependencias y concurrencia, con un escritor por archivo y appsec-cierre al final.
 Si un control sensible necesita revisión adicional, asigna a seguridad-revisor una pregunta puntual con el diff y la evidencia existente.`
 
 export const AMBOS = `# Desarrollo + Ciberseguridad

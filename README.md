@@ -32,7 +32,7 @@ Al iniciar una sesión, una barra sobre el prompt pregunta para qué es:
 
 ### Equipos de Desarrollo
 
-Para trabajos con piezas independientes, el orquestador arma un plan con tareas de preparación, implementación, verificación e integración. El mod lanza las que tengan dependencias resueltas. El plan admite hasta tres agentes a la vez (dos por defecto) y un punto de control de uno a treinta minutos (diez por defecto). Las demoras aparecen en `/equipos` y el tablero. El orquestador puede reasignar tareas que hayan terminado con fallo o pendientes. La cola evita escritores simultáneos sobre rutas declaradas que se solapen.
+Para trabajos con piezas independientes, el orquestador arma un plan con tareas de preparación, implementación, verificación e integración. En modo Ambos, el mod lanza las que tengan dependencias resueltas. En modo Desarrollo, el mod registra el plan y el orquestador lanza cada tarea con la herramienta Agent, así cada subagente se ve por separado en la conversación. El plan admite hasta cinco agentes a la vez (dos por defecto) y un punto de control de uno a treinta minutos (diez por defecto). Las demoras aparecen en `/equipos` y el tablero. El orquestador puede reasignar tareas que hayan terminado con fallo o pendientes. La cola evita escritores simultáneos sobre rutas declaradas que se solapen.
 
 Sonnet implementa y Haiku se encarga de comprobaciones acotadas. Usan el mismo ciclo de [ub-mode](https://github.com/unclebob/ub-mode), incluido con su licencia MIT (revisión `3da62bf`). Los chequeos externos requieren las herramientas correspondientes en el proyecto. Los casos y resultados se reutilizan en las etapas siguientes.
 
