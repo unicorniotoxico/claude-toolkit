@@ -318,6 +318,49 @@ test('Desarrollo exige iniciar el plan antes de editar o usar la terminal en el 
   expect(tras.deny).toBeUndefined()
 })
 
+test('Desarrollo solo registra el plan y deja que el hilo principal lance los agentes', async ($, on) => {
+  let lanzamientos = 0
+  on('session.root', () => ({ value: '/proyecto' }))
+  on('clock.now', () => ({ value: 1000 }))
+  on('agent.spawn', () => { lanzamientos++; return { deny: 'Motor de prueba sin agentes vivos' } })
+  on('tool.call', () => ({ result: 'ok' }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: 'a'.repeat(40), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', ($, e) => h($.ui.resolve(e).Box, {}) as RenderElement)
+  const pane = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'Pane', requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 50 }, view: {} },
+  })
+  await pane.press({ key: 'cambiar-modo' })
+  const band = await $.ui.mount({
+    plugin: 'tablero', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+  })
+  await band.press({ key: 'dev' })
+  const tareas = [{ id: 'catalogo', equipo: 'Catálogo', tipo: 'implementacion', objetivo: 'Listar dinosaurios', archivos: ['listado.php'] }]
+  const iniciar = (extra: Record<string, unknown> = {}) =>
+    $.tool.call({ tool: 'mcp__tablero__equipos_desarrollo', accion: 'iniciar', tareas, ...extra })
+  const plan = await iniciar()
+  expect(plan.deny).toBeUndefined()
+  expect(lanzamientos).toBe(0)
+  const texto = JSON.stringify(plan.result)
+  expect(texto).toContain('registro')
+  expect(texto).toContain('tablero:desarrollo-dev')
+  expect(texto).toContain('appsec-cierre')
+  expect(texto).toContain('tablero:appsec')
+  const estado = await $.tool.call({ tool: 'mcp__tablero__equipos_desarrollo', accion: 'estado' })
+  expect(JSON.stringify(estado.result)).toContain('appsec-cierre')
+  const reintento = await $.tool.call({ tool: 'mcp__tablero__equipos_desarrollo', accion: 'reintentar', id: 'catalogo', ajuste: 'corregir' })
+  expect(reintento.isError).toBe(true)
+  expect(JSON.stringify(reintento)).toContain('Agent')
+  const agente = await $.tool.call({ tool: 'Agent', description: 'Implementar', subagent_type: 'tablero:desarrollo-dev', prompt: 'x' })
+  expect(String(agente.deny ?? '')).not.toContain('Modo Desarrollo')
+  expect((await iniciar({ concurrencia: 5 })).isError).toBeFalsy()
+  expect(JSON.stringify(await iniciar({ concurrencia: 6 }))).toContain('Concurrencia entre 1 y 5')
+  expect(lanzamientos).toBe(0)
+})
+
 test('el aviso detalla cada paquete, permite omitir y se puede silenciar', async ($, on) => {
   let ejecuciones = 0
   on('clock.after', () => ({ value: undefined }))

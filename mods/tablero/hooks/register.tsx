@@ -6,7 +6,7 @@ import { alcancePedido, AMBOS, CIBERSEGURIDAD, DESARROLLO } from './roles'
 import { ALERTAS, BLOQUES, FORMULARIO_INICIAL, describirBloque, prepararEnvio, validarDestino } from './dispositivos'
 import { ConsumoLocal, sumarConsumos, totalTokens } from './consumo'
 import { leerPropuesta } from './herramientas'
-import { Equipos, incluirAppSec, planValidado, promptTarea, TIPOS, type PlanGuardado } from './equipos'
+import { Equipos, incluirAppSec, planValidado, promptTarea, TIPOS, type PlanGuardado, type Tarea } from './equipos'
 
 // Qué se actualiza cómo:
 //  - por eventos: agentes (agent.spawn / classic.SubagentStop / turn.complete del subagente), herramientas y
@@ -717,7 +717,7 @@ async function iniciarDesarrollo($: EngineInterface) {
             depende: lista, archivos: lista, simulacionPHP: { type: 'boolean' },
           },
         } },
-        concurrencia: { type: 'integer', minimum: 1, maximum: 3 },
+        concurrencia: { type: 'integer', minimum: 1, maximum: 5 },
         minutos: { type: 'integer', minimum: 1, maximum: 30 },
         id: texto, ajuste: texto,
       },
@@ -812,21 +812,25 @@ function guardarPlan($: EngineInterface) {
   }).catch(async () => { await update($, equipos, () => filas).catch(() => {}) })
 }
 
+function subagenteDe(t: Tarea): string {
+  const agentesUX = {
+    diseno_ux: 'desarrollo-ux', revision_ux: 'desarrollo-ux-visual',
+    revision_ux_visual: 'desarrollo-ux-visual', revision_ux_interaccion: 'desarrollo-ux-interaccion',
+  } as const
+  const tipo = t.tipo in agentesUX ? agentesUX[t.tipo as keyof typeof agentesUX] :
+    t.tipo === 'implementacion' ? 'desarrollo-dev' : t.tipo === 'appsec' ? 'appsec' : t.simulacionPHP ? 'desarrollo-php' : 'desarrollo-verificador'
+  return 'tablero:' + tipo
+}
+
 function motorEquipo($: EngineInterface, root: string, base: string): ConstructorParameters<typeof Equipos>[0] {
   return {
     lanzar: (t, evidencia) => {
-      const agentesUX = {
-        diseno_ux: 'desarrollo-ux', revision_ux: 'desarrollo-ux-visual',
-        revision_ux_visual: 'desarrollo-ux-visual', revision_ux_interaccion: 'desarrollo-ux-interaccion',
-      } as const
-      const tipo = t.tipo in agentesUX ? agentesUX[t.tipo as keyof typeof agentesUX] :
-        t.tipo === 'implementacion' ? 'desarrollo-dev' : t.tipo === 'appsec' ? 'appsec' : t.simulacionPHP ? 'desarrollo-php' : 'desarrollo-verificador'
       const instrucciones = t.tipo === 'implementacion'
         ? '\nGuía ub-mode: ' + $.plugin.root + '/skills/ub-mode/SKILL.md. Lee las fases pertinentes. Conserva la entrega local.'
         : ''
       return $.agent.spawn({
         cwd: root,
-        subagentType: 'tablero:' + tipo,
+        subagentType: subagenteDe(t),
         description: (t.equipo + ': ' + t.id).slice(0, 100),
         prompt: promptTarea(t, evidencia) + instrucciones + (base ? '\nCommit base: ' + base : ''),
       })
@@ -856,6 +860,7 @@ async function restaurarPlan($: EngineInterface) {
 export const register: Register = on => {
   let edicionRedirigida = false
   let planDelPedido = false
+  let planRegistrado: unknown
   let alcance: ReturnType<typeof alcancePedido> = 'trabajo'
   const respuestaDirecta = 'Este pedido solicita una respuesta directa. Respeta el formato pedido y no inicies planes, agentes ni cambios.'
 
@@ -969,8 +974,13 @@ export const register: Register = on => {
   on('tool.run', { tool: PLAN }, async ($, e) => {
     const seleccionado = await read($, mode)
     if (e.agentId || !isRole(seleccionado)) return { deny: 'Elegí un modo del toolkit para gestionar equipos.' }
-    await restaurarPlan($)
     const args = e as unknown as Record<string, unknown>
+    if (seleccionado === 'desarrollo') {
+      if (args.accion === 'estado') return { result: JSON.stringify(planRegistrado ?? []) }
+      if (args.accion === 'reintentar')
+        return { deny: 'En Desarrollo el tablero no lanza agentes: relanzá la tarea con Agent, con el ajuste en el prompt.' }
+    }
+    await restaurarPlan($)
     if (args.accion === 'estado') {
       const filas = flujo?.resumen(true) ?? []
       return { result: JSON.stringify(typeof args.id === 'string'
@@ -997,9 +1007,21 @@ export const register: Register = on => {
         const plan = incluirAppSec(tareas)
         const n = args.concurrencia ?? 2
         const minutos = args.minutos ?? 10
-        if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 3 ||
+        if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 5 ||
             typeof minutos !== 'number' || !Number.isInteger(minutos) || minutos < 1 || minutos > 30)
-          throw new Error('Concurrencia entre 1 y 3, punto de control entre 1 y 30 minutos.')
+          throw new Error('Concurrencia entre 1 y 5, punto de control entre 1 y 30 minutos.')
+        if (seleccionado === 'desarrollo') {
+          planRegistrado = plan.map(t => ({
+            id: t.id, equipo: t.equipo, tipo: t.tipo, objetivo: t.objetivo,
+            depende: t.depende, archivos: t.archivos, subagent_type: subagenteDe(t),
+          }))
+          planDelPedido = true
+          return { result: JSON.stringify({
+            modo: 'registro', concurrencia: n, tareas: planRegistrado,
+            instrucciones: 'El tablero solo registró el plan. Lanzá cada tarea con Agent (subagent_type indicado) en paralelo hasta ' + n +
+              ' a la vez, respetando depende; un único escritor por archivo; appsec-cierre al final, cuando terminen las implementaciones.',
+          }) }
+        }
         const root = await $.session.root()
         const base = await $.process.run(['git', '-C', root, 'rev-parse', '--verify', 'HEAD'], { timeoutMs: 5000 })
           .then(r => r.exitCode === 0 ? r.stdout.trim() : '', () => '')
