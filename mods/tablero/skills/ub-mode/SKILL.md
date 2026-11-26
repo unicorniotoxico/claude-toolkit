@@ -105,19 +105,27 @@ Every time you are asked to make a change follow:
 * The test calls the code the way its user does and checks the result that user would see.
 * If the test would still pass when every function returned nothing, throw it out.
 
+## Quality Tools
+
+* Crapper, Dryer and Mutator name measures, not fixed binaries: run the tool the project's stack already has for each one.
+* If none is available, call herramientas_desarrollo (acción estado, then proponer) for the tool that fits the stack. The proposal states what it measures in this change (motivo), how it installs (gestor and exact paquete) and the executable. The user authorizes it in the panel's modal; never install it any other way.
+* If the user skips the install, continue and report the measure as pending, naming the tool.
+* Run the measures on the changed code and report what each one found.
+
 ## Crapper
 
-* Use the crapper tool
-* Reduce each function under  CRAP 10 by splitting it, by testing it, or both.
+* Measure complexity with coverage (CRAP), e.g. a complexity tool plus the stack's coverage report.
+* Reduce each function under CRAP 10 by splitting it, by testing it, or both.
 * Consider whether case statements are worth reducing.
 
 ## Dryer
 
-* Use the dryer tool to eliminate duplication that rank 0.8 or above.
+* Measure duplication with the stack's clone detector.
+* Eliminate duplication that ranks 0.8 or above.
 
 ## Mutator
 
-* Use the mutator tool
+* Run the stack's mutation tester on the changed code.
 * Cover the uncovered.
 * Kill the survivors.
 * Delete dead code.

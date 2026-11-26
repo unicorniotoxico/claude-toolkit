@@ -1,5 +1,8 @@
 # Cambios
 
+## 1.6.3
+- ub-mode: Crapper, Dryer y Mutator se resuelven con las herramientas del stack. Si falta alguna, se propone desde el panel con su motivo y forma de instalación para que el usuario la autorice.
+
 ## 1.6.2
 - Modo Desarrollo: antes de editar, usar la terminal o lanzar agentes hay que iniciar el plan en `equipos_desarrollo` con el reparto de la tarea. El modo Ambos mantiene su regla.
 
