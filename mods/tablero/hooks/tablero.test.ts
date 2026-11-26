@@ -477,3 +477,44 @@ test('Agentes muestra los tokens de esta sesión por agente y permite desplegar 
   expect(await ui.find({ text: 'No hay subagentes activos.' })).toBeDefined()
   expect(await ui.find({ text: '70 tokens registrados' })).toBeDefined()
 })
+
+test('Siguiente envía lo escrito en los campos de red sin exigir Enter en cada uno', async ($, on) => {
+  const envios: Array<{ accion: string; stdin?: string }> = []
+  on('process.run', (_$, e) => {
+    const accion = e.argv[4] ?? ''
+    envios.push({ accion, stdin: e.init?.stdin })
+    const salida = accion === 'snapshot'
+      ? { enabled: false, conexion: { estado: 'sin_configurar' }, puedeFirmar: false, pending: [], grants: [], inbox: [], alerts: [] }
+      : { ok: true }
+    return { value: { exitCode: 0, stdout: JSON.stringify(salida), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('tool.list', () => ({ value: [] }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200000 }, rateLimits: [] } }))
+  on('agent.list', () => ({ value: [] }))
+  on('clock.now', () => ({ value: 1000 }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  const ui = await $.ui.mount({
+    plugin: 'tablero',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'tablero',
+    props: { title: 'Tablero', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 80 }, view: {} },
+  })
+  await ui.press({ key: 'tab:dispositivos' })
+  await ui.press({ key: 'dispositivos:agregar' })
+  await ui.press({ key: 'dispositivos:usar-archivos' })
+  await ui.input({ key: 'dispositivo:config:cert', text: 'C:/id/device.pem', kind: 'change' })
+  await ui.input({ key: 'dispositivo:config:clave', text: 'C:/id/device.key', kind: 'change' })
+  await ui.input({ key: 'dispositivo:config:autoridad', text: 'C:/id/ca.pem', kind: 'change' })
+  await ui.press({ key: 'dispositivos:paso' })
+  expect(envios.find(envio => envio.accion === 'check-identity')?.stdin)
+    .toBe(JSON.stringify(['C:/id/device.pem', 'C:/id/device.key', 'C:/id/ca.pem']))
+  await ui.input({ key: 'dispositivo:config:ip', text: '192.168.2.49', kind: 'change' })
+  await ui.input({ key: 'dispositivo:config:puerto', text: '8443', kind: 'change' })
+  await ui.input({ key: 'dispositivo:config:origenes', text: '192.168.2.85', kind: 'change' })
+  await ui.press({ key: 'dispositivos:paso' })
+  expect(await ui.find({ text: 'Completá la IP, el puerto y los origenes.' })).toBeUndefined()
+  expect(envios.find(envio => envio.accion === 'configure')?.stdin).toBe(JSON.stringify(
+    ['C:/id/device.pem', 'C:/id/device.key', 'C:/id/ca.pem', '192.168.2.49', '8443', '192.168.2.85']))
+})

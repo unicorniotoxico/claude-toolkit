@@ -422,6 +422,9 @@ async function abrirFirmaDispositivo($: EngineInterface) {
   await update($, certificadosDispositivos, () => CERTIFICADOS_INICIAL)
 }
 
+// Un campo guarda su texto en cada cambio: Siguiente valida lo escrito aunque no se haya apretado Enter.
+const alEscribir = (guardar: (value: string) => unknown) => ({ onInput: guardar, onSubmit: guardar })
+
 let gestionandoCertificados = false
 
 async function operarCertificados($: EngineInterface, accion: 'crear-autoridad' | 'crear-solicitud' | 'leer-solicitud' | 'firmar' | 'importar') {
@@ -1733,12 +1736,12 @@ export const register: Register = on => {
                 <Box flexDirection="column">
                   <Text dimColor>Ruta del certificado que te devolvieron</Text>
                   <Input key="dispositivo:respuesta-certificado" value={datosCert.entrada} submitLabel="Guardar"
-                    onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, entrada: value }))} />
+                    {...alEscribir(value => update($, certificadosDispositivos, f => ({ ...f, entrada: value })))} />
                 </Box>
                 <Box flexDirection="column">
                   <Text dimColor>Huella de la CA confirmada con la otra PC</Text>
                   <Input key="dispositivo:huella-ca" value={datosCert.huellaAutoridad} submitLabel="Guardar"
-                    onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, huellaAutoridad: value }))} />
+                    {...alEscribir(value => update($, certificadosDispositivos, f => ({ ...f, huellaAutoridad: value })))} />
                 </Box>
                 <Button key="dispositivos:importar-certificado" variant="primary" onPress={press => {
                   if (press.surface === 'terminal' || press.surface === 'desktop') return operarCertificados($, 'importar')
@@ -1760,7 +1763,7 @@ export const register: Register = on => {
                     <Box flexDirection="column">
                       <Text dimColor>Ruta del archivo .csr recibido</Text>
                       <Input key="dispositivo:archivo-csr" value={datosCert.entrada} submitLabel="Guardar"
-                        onSubmit={value => update($, certificadosDispositivos, f => ({ ...f, entrada: value, huella: '', confirmada: false }))} />
+                        {...alEscribir(value => update($, certificadosDispositivos, f => ({ ...f, entrada: value, huella: '', confirmada: false })))} />
                     </Box>
                     {datosCert.huella ? (
                       <Box flexDirection="column">
@@ -1790,7 +1793,7 @@ export const register: Register = on => {
                   <Box key={id} flexDirection="column">
                     <Text dimColor>{label}</Text>
                     <Input key={'dispositivo:config:' + id} value={config[id]} submitLabel="Guardar"
-                      onSubmit={value => update($, configuracionDispositivos, f => ({ ...f, [id as keyof ConfiguracionDispositivos]: value }))} />
+                      {...alEscribir(value => update($, configuracionDispositivos, f => ({ ...f, [id as keyof ConfiguracionDispositivos]: value })))} />
                   </Box>
                 ))}
                 <Button key="dispositivos:paso" variant="primary" onPress={press => {
@@ -1841,7 +1844,7 @@ export const register: Register = on => {
                   <Box key={id} flexDirection="column">
                     <Text dimColor>{label}</Text>
                     <Input key={'dispositivo:destino:' + id} value={formulario[id]} submitLabel="Guardar"
-                      onSubmit={value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false }))} />
+                      {...alEscribir(value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false })))} />
                   </Box>
                 ))}
                 <Button key="dispositivos:coincide-destino" plain onPress={() =>
@@ -1881,12 +1884,12 @@ export const register: Register = on => {
                     <Box flexDirection="column">
                       <Text dimColor>Identificador del proyecto</Text>
                       <Input key="dispositivo:permiso-proyecto" value={formulario.proyecto}
-                        onSubmit={value => update($, formularioDispositivo, f => ({ ...f, proyecto: value }))} />
+                        {...alEscribir(value => update($, formularioDispositivo, f => ({ ...f, proyecto: value })))} />
                     </Box>
                     <Box flexDirection="column">
                       <Text dimColor>Duración en minutos</Text>
                       <Input key="dispositivo:permiso-minutos" value={formulario.minutos}
-                        onSubmit={value => update($, formularioDispositivo, f => ({ ...f, minutos: value }))} />
+                        {...alEscribir(value => update($, formularioDispositivo, f => ({ ...f, minutos: value })))} />
                     </Box>
                     {bloques.map(([id, nombre]) => (
                       <Button key={'dispositivo:permiso:' + id} plain onPress={() => update($, formularioDispositivo, f => ({ ...f, bloque: id }))}>
@@ -1924,7 +1927,7 @@ export const register: Register = on => {
                       <Box key={id} flexDirection="column">
                         <Text dimColor>{label}</Text>
                         <Input key={'dispositivo:destino:' + id} value={formulario[id]} submitLabel="Guardar"
-                          onSubmit={value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false }))} />
+                          {...alEscribir(value => update($, formularioDispositivo, f => ({ ...f, [id]: value, coincide: false })))} />
                       </Box>
                     ))}
                     {vistaActual === 'enviar' && (
@@ -1937,14 +1940,14 @@ export const register: Register = on => {
                       <Box flexDirection="column">
                         <Text dimColor>Código temporal</Text>
                         <Input key="dispositivo:codigo" value={formulario.codigo} submitLabel="Guardar"
-                          onSubmit={value => update($, formularioDispositivo, f => ({ ...f, codigo: value }))} />
+                          {...alEscribir(value => update($, formularioDispositivo, f => ({ ...f, codigo: value })))} />
                       </Box>
                     ) : (
                       <Box flexDirection="column">
                         <Box flexDirection="column">
                           <Text dimColor>Identificador del proyecto</Text>
                           <Input key="dispositivo:proyecto" value={formulario.proyecto} submitLabel="Guardar"
-                            onSubmit={value => update($, formularioDispositivo, f => ({ ...f, proyecto: value }))} />
+                            {...alEscribir(value => update($, formularioDispositivo, f => ({ ...f, proyecto: value })))} />
                         </Box>
                         {bloques.map(([id, nombre]) => (
                           <Button key={'dispositivo:bloque:' + id} plain onPress={() =>
@@ -1957,12 +1960,12 @@ export const register: Register = on => {
                             <Box flexDirection="column">
                               <Text dimColor>Pruebas aprobadas</Text>
                               <Input key="dispositivo:aprobadas" value={formulario.valor} submitLabel="Guardar"
-                                onSubmit={value => update($, formularioDispositivo, f => ({ ...f, valor: value }))} />
+                                {...alEscribir(value => update($, formularioDispositivo, f => ({ ...f, valor: value })))} />
                             </Box>
                             <Box flexDirection="column">
                               <Text dimColor>Pruebas fallidas</Text>
                               <Input key="dispositivo:fallidas" value={formulario.revision} submitLabel="Guardar"
-                                onSubmit={value => update($, formularioDispositivo, f => ({ ...f, revision: value }))} />
+                                {...alEscribir(value => update($, formularioDispositivo, f => ({ ...f, revision: value })))} />
                             </Box>
                           </Box>
                         ) : (
@@ -1979,7 +1982,7 @@ export const register: Register = on => {
                               <Box flexDirection="column">
                                 <Text dimColor>Commit completo</Text>
                                 <Input key="dispositivo:revision" value={formulario.revision} submitLabel="Guardar"
-                                  onSubmit={value => update($, formularioDispositivo, f => ({ ...f, revision: value }))} />
+                                  {...alEscribir(value => update($, formularioDispositivo, f => ({ ...f, revision: value })))} />
                               </Box>
                             )}
                           </Box>

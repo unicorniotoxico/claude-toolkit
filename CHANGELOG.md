@@ -1,5 +1,8 @@
 # Cambios
 
+## 1.6.1
+- Dispositivos: los campos del asistente guardan lo escrito sin apretar Enter, así que Siguiente envía y valida lo que se ve. Antes respondía "Completá la IP, el puerto y los origenes" con los campos llenos.
+
 ## 1.6.0
 - Equipos de Desarrollo con dependencias, concurrencia acotada, puntos de control e integración de ub-mode.
 - Verificación diferencial independiente de PHP fuera de Apache con Docker sin red.
